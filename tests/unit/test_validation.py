@@ -48,6 +48,7 @@ _COUNT_ACCEPT = [
     pytest.param("10", 10, id="default"),
     pytest.param("50", 50, id="max"),
     pytest.param("007", 7, id="leading-zeros"),
+    pytest.param("0" * 5000 + "5", 5, id="very-long-leading-zeros"),
 ]
 
 _COUNT_REJECT = [
@@ -63,6 +64,7 @@ _COUNT_REJECT = [
     pytest.param("", id="empty"),
     pytest.param("\u0661", id="non-ascii-digit"),
     pytest.param("50x", id="trailing-junk"),
+    pytest.param("9" * 5000, id="huge-digit-string"),
 ]
 
 
@@ -210,6 +212,7 @@ _FETCH_REJECT = [
     pytest.param("https://example.com:0", id="zero-port"),
     pytest.param("https://example.com:65536", id="large-port"),
     pytest.param("https://[::1", id="malformed-ipv6"),
+    pytest.param("https://example.com:" + "9" * 5000, id="huge-port-digits"),
 ]
 
 

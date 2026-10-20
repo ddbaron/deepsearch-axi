@@ -53,6 +53,7 @@ _REJECT = [
     pytest.param("https://api.deepseek.com:abc", id="nonnumeric-port"),
     pytest.param("https://api.deepseek.com:0", id="zero-port"),
     pytest.param("https://api.deepseek.com:65536", id="large-port"),
+    pytest.param("https://api.deepseek.com:" + "9" * 5000, id="huge-port-digits"),
     pytest.param("https://api.deepseek.com:-1", id="negative-port"),
     pytest.param(" https://api.deepseek.com", id="leading-space"),
     pytest.param("https://api.deepseek.com ", id="trailing-space"),

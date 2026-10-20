@@ -387,7 +387,7 @@ def test_usage_messages(argv: list[str], message: str) -> None:
 )
 def test_version_aliases_are_usage_errors(argv: list[str]) -> None:
     failure = _usage_failure(argv)
-    assert failure.message == "--version is only valid alone: deepseek-axi --version"
+    assert failure.message == "--version is only valid alone: deepsearch-axi --version"
 
 
 @pytest.mark.parametrize(
@@ -401,6 +401,8 @@ def test_version_aliases_are_usage_errors(argv: list[str]) -> None:
         pytest.param(["search", "q", "--count", "0"], id="count-zero"),
         pytest.param(["search", "q", "--count", "51"], id="count-high"),
         pytest.param(["search", "q", "--count", "abc"], id="count-text"),
+        pytest.param(["search", "q", "--count", "9" * 5000], id="count-huge-digits"),
+        pytest.param(["fetch", "https://example.com:" + "9" * 5000], id="fetch-huge-port"),
         pytest.param(["search", "q", "--ori-question", ""], id="ori-empty"),
         pytest.param(["search", "q", "--ori-question", "x" * 129], id="ori-long"),
         pytest.param(["search", "q", "--localization", "localhost"], id="localization"),
@@ -418,7 +420,7 @@ def test_version_aliases_are_usage_errors(argv: list[str]) -> None:
 def test_usage_failures_for_values(argv: list[str]) -> None:
     failure = _usage_failure(argv)
     assert failure.message.startswith("invalid value for ")
-    assert failure.message != "--version is only valid alone: deepseek-axi --version"
+    assert failure.message != "--version is only valid alone: deepsearch-axi --version"
 
 
 def test_double_dash_trailing_version_alias_is_literal() -> None:

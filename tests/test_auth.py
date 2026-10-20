@@ -135,6 +135,44 @@ def test_env_key_is_stripped_and_prevents_file_reads(
     assert reads == []
 
 
+def test_invalid_env_never_falls_through_to_dotenv_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = tmp_path / "project"
+    home = tmp_path / "home"
+    cwd.mkdir(exist_ok=True)
+    home.mkdir(exist_ok=True)
+    _write_dotenv(cwd / ".env", CWD_KEY)
+    _write_dotenv(home / HOME_DOTENV, HOME_KEY)
+    reads = _instrument_reads(monkeypatch)
+    env = {"DEEPSEEK_API_KEY": "bad key"}
+
+    with pytest.raises(DeepsearchError) as info:
+        resolve_credential(env, cwd, home)
+    assert info.value.failure.code == "invalid_config"
+    assert reads == []
+    assert probe_credential(env, cwd, home) == CredentialStatus("invalid", "env")
+    assert reads == []
+
+
+def test_invalid_cwd_dotenv_never_falls_through_to_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = tmp_path / "project"
+    home = tmp_path / "home"
+    cwd.mkdir(exist_ok=True)
+    home.mkdir(exist_ok=True)
+    (cwd / ".env").write_text('DEEPSEEK_API_KEY="unterminated\n', encoding="utf-8")
+    _write_dotenv(home / HOME_DOTENV, HOME_KEY)
+    reads = _instrument_reads(monkeypatch)
+
+    with pytest.raises(DeepsearchError) as info:
+        resolve_credential({}, cwd, home)
+    assert info.value.failure.code == "invalid_config"
+    assert reads == [cwd / ".env"]
+    assert probe_credential({}, cwd, home) == CredentialStatus("invalid", "cwd_dotenv")
+
+
 _DOTENV_CASES = [
     pytest.param(b"DEEPSEEK_API_KEY=abc123\n", "abc123", None, id="plain"),
     pytest.param(b"DEEPSEEK_API_KEY=abc123", "abc123", None, id="no-trailing-newline"),

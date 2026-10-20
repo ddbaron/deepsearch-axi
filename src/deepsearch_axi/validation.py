@@ -22,6 +22,8 @@ from deepsearch_axi.models import (
 )
 
 _COUNT_RE = re.compile(r"[0-9]+")
+_COUNT_MAX = 50
+_COUNT_MESSAGE = "invalid value for --count"
 _SEARCH_PATH = ("search",)
 _FETCH_PATH = ("fetch",)
 _URL_PATH_MESSAGE = "invalid value for <url>"
@@ -45,10 +47,15 @@ def validate_query(query: str) -> None:
 def parse_count(token: str) -> int:
     """Parse an ASCII decimal result count in 1..50."""
     if _COUNT_RE.fullmatch(token) is None:
-        _fail(_SEARCH_PATH, "invalid value for --count")
-    value = int(token)
-    if not 1 <= value <= 50:
-        _fail(_SEARCH_PATH, "invalid value for --count")
+        _fail(_SEARCH_PATH, _COUNT_MESSAGE)
+    # Strip leading zeros before int() so arbitrarily long (but still valid
+    # decimal) inputs cannot hit CPython's integer-string conversion limit.
+    significant = token.lstrip("0") or "0"
+    if len(significant) > len(str(_COUNT_MAX)):
+        _fail(_SEARCH_PATH, _COUNT_MESSAGE)
+    value = int(significant)
+    if not 1 <= value <= _COUNT_MAX:
+        _fail(_SEARCH_PATH, _COUNT_MESSAGE)
     return value
 
 

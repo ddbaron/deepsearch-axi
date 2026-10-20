@@ -32,7 +32,7 @@ from deepsearch_axi.models import (
 )
 
 _VERSION_ALIASES = frozenset({"-v", "-V", "--version"})
-_VERSION_MESSAGE = "--version is only valid alone: deepseek-axi --version"
+_VERSION_MESSAGE = "--version is only valid alone: deepsearch-axi --version"
 _SAFE_FLAG_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9-]{0,31}$")
 _UNRECOGNIZED = "an unrecognized argument"
 _SESSION_EVENTS = ("start", "end")
