@@ -45,3 +45,8 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# deepsearch-axi tool state and packaging
+.deepsearch-axi/
+wheelhouse/
+node_modules/

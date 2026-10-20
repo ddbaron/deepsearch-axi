@@ -1,0 +1,6 @@
+{
+  "session_id": "codex-session-0001",
+  "transcript_path": "/tmp/deepsearch-axi-transcripts/codex-0001.jsonl",
+  "cwd": "__CWD__",
+  "hook_event_name": "SessionEnd"
+}
