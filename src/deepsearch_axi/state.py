@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deepsearch_axi.failures import local_io
-from deepsearch_axi.fsutil import atomic_write, locked, read_bytes_or_none
+from deepsearch_axi.fsutil import atomic_write, locked
 from deepsearch_axi.manifest import load_manifest
 from deepsearch_axi.models import (
     AGENTS,
@@ -34,7 +34,13 @@ LOCK_RELATIVE = ".deepsearch-axi/state.lock"
 STATE_SCHEMA = 1
 
 _SCOPE_HASH_PREFIX = "h:"
+_SCOPE_ESCAPE_PREFIX = "l:"
 _MAX_SCOPE_CHARS = 256
+# A state file is always written at or below MAX_STATE_FILE_BYTES, but a
+# larger-yet-valid file (e.g. a seed from an older/foreign writer) is still
+# read within this hard bound so the next write can evict it back under the
+# cap.  Anything bigger is treated as corrupt instead of being read.
+_MAX_RECOVERABLE_STATE_BYTES = MAX_STATE_FILE_BYTES * 4
 _MAX_WALK_LEVELS = 64
 _SESSION_EVENTS = frozenset({"start", "checkpoint", "end"})
 _ACTIVITY_FIELDS = ("search_ok", "search_fail", "fetch_ok", "fetch_fail")
@@ -69,6 +75,10 @@ def scope_for(root: Path, cwd: Path) -> str | None:
         return "."
     if len(scope) > _MAX_SCOPE_CHARS:
         return _SCOPE_HASH_PREFIX + hashlib.sha256(scope.encode("utf-8")).hexdigest()[:32]
+    if scope.startswith((_SCOPE_HASH_PREFIX, _SCOPE_ESCAPE_PREFIX)):
+        # Keep literal scopes out of the reserved hashed/escaped namespaces so a
+        # real directory named "h:<digest>" can never alias a hashed scope.
+        return _SCOPE_ESCAPE_PREFIX + scope
     return scope
 
 
@@ -232,11 +242,11 @@ def _validated_state(data: object) -> dict | None:
         record_seq = record.get("seq")
         if not isinstance(identifier, str) or not _is_hashed_id(identifier):
             return None
-        if agent not in AGENTS:
+        if not isinstance(agent, str) or agent not in AGENTS:
             return None
         if not isinstance(scope, str):
             return None
-        if kind not in _SESSION_EVENTS:
+        if not isinstance(kind, str) or kind not in _SESSION_EVENTS:
             return None
         if not _is_int(record_seq) or record_seq < 1:
             return None
@@ -275,12 +285,18 @@ def _read_state(root: Path) -> dict:
     path = Path(root) / STATE_RELATIVE
     if path.is_symlink():
         return _empty_state()
-    raw = read_bytes_or_none(path)
-    if raw is None:
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(_MAX_RECOVERABLE_STATE_BYTES + 1)
+    except FileNotFoundError:
+        return _empty_state()
+    except OSError:
+        raise DeepsearchError(local_io(STATE_RELATIVE)) from None
+    if len(raw) > _MAX_RECOVERABLE_STATE_BYTES:
         return _empty_state()
     try:
         data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         return _empty_state()
     return _validated_state(data) or _empty_state()
 

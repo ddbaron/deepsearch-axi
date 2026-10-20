@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import socket
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -243,6 +246,26 @@ def test_normalize_event_rejects_invalid_payloads(
     assert excinfo.value.failure.code == "invalid_event"
 
 
+def test_normalize_event_accepts_the_maximum_session_id_length(project: Path) -> None:
+    session_id = "x" * 512
+    native = normalize_event(
+        "start", "codex", project, {"session_id": session_id, "cwd": str(project)}
+    )
+    assert native.session_hash == session_hash("codex", session_id)
+    assert native.kind == "start"
+
+
+@pytest.mark.parametrize(
+    "hook_value",
+    [["session.idle"], {"name": "session.idle"}, 7, True],
+)
+def test_normalize_event_non_string_hook_names_are_ordinary_end(
+    project: Path, hook_value: object
+) -> None:
+    payload = {"session_id": "session-1", "cwd": str(project), "hook_event_name": hook_value}
+    assert normalize_event("end", "opencode", project, payload).kind == "end"
+
+
 def test_normalize_event_rejects_a_non_directory_project(tmp_path: Path) -> None:
     file_root = tmp_path / "file-root"
     file_root.write_text("not a directory", encoding="utf-8")
@@ -407,6 +430,41 @@ def test_handle_session_invalid_payload_writes_no_state(
     assert excinfo.value.failure.code == "invalid_event"
     assert not (project / STATE_RELATIVE).exists()
     assert documents.calls == {"ambient": [], "end": []}
+
+
+def test_start_performs_no_host_process_network_or_transcript_io(
+    project: Path, documents: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("SECRET-TRANSCRIPT-CONTENT", encoding="utf-8")
+    opened: list[str] = []
+    real_io_open = io.open
+
+    def recording_open(file: object, *args: object, **kwargs: object) -> object:
+        opened.append(str(file))
+        return real_io_open(file, *args, **kwargs)  # type: ignore[arg-type]
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("start attempted a host, process or network call")
+
+    monkeypatch.setattr(io, "open", recording_open)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr(os, "system", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+
+    payload = {
+        "session_id": "session-io-probe",
+        "cwd": str(project),
+        "transcript_path": str(transcript),
+        "hook_event_name": "SessionStart",
+    }
+    result = handle_session("start", "claude-code", project, payload, context_for=context_for)
+
+    assert result.recorded is True
+    assert len(documents.calls["ambient"]) == 1
+    assert not any(path.endswith("transcript.jsonl") for path in opened)
 
 
 def test_handle_session_persists_no_private_payload_fields(

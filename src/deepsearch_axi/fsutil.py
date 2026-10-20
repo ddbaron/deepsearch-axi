@@ -118,9 +118,27 @@ def apply_changes(changes: Sequence[FileChange]) -> None:
 
 @contextmanager
 def locked(lock_path: Path) -> Iterator[None]:
-    """Hold an exclusive advisory lock for the duration of the context."""
+    """Hold an exclusive advisory lock for the duration of the context.
+
+    The lock file must be a regular file and is opened with ``O_NOFOLLOW`` so
+    a planted symlink can neither redirect the lock nor make us create a file
+    outside its directory.
+    """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        existing = os.lstat(lock_path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise DeepsearchError(local_io(str(lock_path))) from None
+    else:
+        if not stat.S_ISREG(existing.st_mode):
+            raise DeepsearchError(local_io(str(lock_path)))
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(lock_path), flags, 0o600)
+    except OSError:
+        raise DeepsearchError(local_io(str(lock_path))) from None
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield

@@ -14,10 +14,12 @@ from deepsearch_axi.models import (
     MAX_SESSION_RECORDS,
     MAX_STATE_FILE_BYTES,
     Activity,
+    DeepsearchError,
     NativeEvent,
     PriorEvent,
 )
 from deepsearch_axi.state import (
+    LOCK_RELATIVE,
     STATE_RELATIVE,
     find_state_root,
     read_view,
@@ -103,6 +105,53 @@ def test_scope_for_hashes_very_long_relative_paths(tmp_path: Path) -> None:
     assert scope.startswith("h:")
     assert len(scope) == 34
     assert all(character in "0123456789abcdef" for character in scope[2:])
+
+
+def test_scope_for_keeps_literal_h_prefixed_paths_out_of_the_hashed_namespace(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    long_relative = ("a" * 150) + "/" + ("b" * 149)
+    deep = root / long_relative
+    deep.mkdir(parents=True)
+    hashed_scope = scope_for(root, deep)
+    assert hashed_scope is not None and hashed_scope.startswith("h:")
+
+    literal = root / hashed_scope
+    literal.mkdir()
+    literal_scope = scope_for(root, literal)
+    assert literal_scope is not None
+    assert literal_scope != hashed_scope
+    assert scope_for(root, root / literal_scope) != literal_scope
+
+
+def test_hashed_scope_never_aliases_a_literal_h_prefixed_directory(project: Path) -> None:
+    long_relative = ("a" * 150) + "/" + ("b" * 149)
+    deep = project / long_relative
+    deep.mkdir(parents=True)
+    hashed_scope = scope_for(project, deep)
+    assert hashed_scope is not None
+    literal = project / hashed_scope
+    literal.mkdir()
+    literal_scope = scope_for(project, literal)
+    assert literal_scope is not None
+    assert literal_scope != hashed_scope
+
+    record_research(project, hashed_scope, "search", True)
+    record_research(project, literal_scope, "fetch", True)
+    _, hashed_activity = read_view(project, hashed_scope)
+    _, literal_activity = read_view(project, literal_scope)
+    assert hashed_activity == Activity(search_ok=1, search_fail=0, fetch_ok=0, fetch_fail=0)
+    assert literal_activity == Activity(search_ok=0, search_fail=0, fetch_ok=1, fetch_fail=0)
+
+    long_event = _event("long-scope-session", "start", scope=hashed_scope)
+    literal_event = _event("literal-scope-session", "end", scope=literal_scope)
+    assert record_session_event(project, long_event, "codex") is True
+    assert record_session_event(project, literal_event, "codex") is True
+    hashed_prior, _ = read_view(project, hashed_scope)
+    literal_prior, _ = read_view(project, literal_scope)
+    assert hashed_prior == PriorEvent(agent="codex", event="start", sessions=1)
+    assert literal_prior == PriorEvent(agent="codex", event="end", sessions=1)
 
 
 def test_find_state_root_walks_to_nearest_manifest(project: Path, home_dir: Path) -> None:
@@ -243,6 +292,9 @@ def test_state_size_eviction_keeps_the_file_within_the_limit(project: Path) -> N
     state = json.loads(raw)
     assert state["sessions"][-1]["id"] == newest.session_hash
     assert len(state["sessions"]) < MAX_SESSION_RECORDS
+    retained_ids = [record["id"] for record in state["sessions"]]
+    seeded_ids = [record["id"] for record in seeded]
+    assert retained_ids == [*seeded_ids[-(len(retained_ids) - 1) :], newest.session_hash]
 
 
 @pytest.mark.parametrize(
@@ -253,6 +305,9 @@ def test_state_size_eviction_keeps_the_file_within_the_limit(project: Path) -> N
         b"[]",
         b'{"schema":1,"seq":"zero","sessions":[],"scopes":{}}',
         b'{"schema":1,"seq":0,"sessions":[{"id":"short"}],"scopes":{}}',
+        b'{"schema":1,"seq":1,"sessions":[{"id":"0123456789abcdef0123456789abcdef",'
+        b'"agent":"codex","scope":".","event":[],"seq":1}],"scopes":{}}',
+        b"[" * 2000 + b"]" * 2000,
         b"x" * 100_000,
     ],
 )
@@ -441,3 +496,19 @@ def test_symlinked_tool_directory_is_never_written(tmp_path: Path) -> None:
     record_research(project, ".", "search", True)
     assert not (outside / "state.json").exists()
     assert not (outside / "state.lock").exists()
+
+
+@pytest.mark.parametrize("mutation", ["session", "research"])
+def test_symlinked_lock_file_cannot_create_files_outside_the_project(
+    project: Path, tmp_path: Path, mutation: str
+) -> None:
+    outside = tmp_path / "outside-lock-target"
+    (project / LOCK_RELATIVE).symlink_to(outside)
+    try:
+        if mutation == "session":
+            record_session_event(project, _event("lock-symlink-session"), "codex")
+        else:
+            record_research(project, ".", "search", True)
+    except DeepsearchError:
+        pass
+    assert not outside.exists()

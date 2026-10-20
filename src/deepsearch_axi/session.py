@@ -107,10 +107,12 @@ def normalize_event(
 
     if event == "start":
         kind: SessionEventKind = "start"
-    elif payload.get("hook_event_name") in _CHECKPOINT_EVENTS:
-        kind = "checkpoint"
     else:
-        kind = "end"
+        hook_name = payload.get("hook_event_name")
+        if isinstance(hook_name, str) and hook_name in _CHECKPOINT_EVENTS:
+            kind = "checkpoint"
+        else:
+            kind = "end"
     return NativeEvent(
         session_hash=session_hash(agent, session_id),
         scope=scope,
