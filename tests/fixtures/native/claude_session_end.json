@@ -1,0 +1,7 @@
+{
+  "session_id": "claude-session-0001",
+  "transcript_path": "/tmp/deepsearch-axi-transcripts/claude-0001.jsonl",
+  "cwd": "__CWD__",
+  "hook_event_name": "SessionEnd",
+  "reason": "exit"
+}
