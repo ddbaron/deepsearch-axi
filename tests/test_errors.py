@@ -10,6 +10,7 @@ from __future__ import annotations
 import http.client
 import json
 import socket
+import threading
 from typing import Any
 
 import pytest
@@ -111,6 +112,133 @@ class ResponseReadSpy:
         monkeypatch.setattr(http.client.HTTPResponse, "readinto", spy_readinto)
 
 
+class CountingReader:
+    """Count every body byte handed to the transport's bounded reader."""
+
+    def __init__(self, fp: Any) -> None:
+        self._fp = fp
+        self.bytes_read = 0
+
+    def read(self, size: int = -1) -> bytes:
+        data = self._fp.read(size)
+        self.bytes_read += len(data)
+        return data
+
+    def readline(self, size: int = -1) -> bytes:
+        data = self._fp.readline(size)
+        self.bytes_read += len(data)
+        return data
+
+    def close(self) -> None:
+        self._fp.close()
+
+    def flush(self) -> None:
+        self._fp.flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._fp, name)
+
+
+@pytest.fixture
+def response_read_counter(monkeypatch: pytest.MonkeyPatch) -> list[CountingReader]:
+    readers: list[CountingReader] = []
+    real_begin = http.client.HTTPResponse.begin
+
+    def begin(response: http.client.HTTPResponse) -> None:
+        real_begin(response)
+        if response.fp is not None:
+            response.fp = CountingReader(response.fp)
+            readers.append(response.fp)
+
+    monkeypatch.setattr(http.client.HTTPResponse, "begin", begin)
+    return readers
+
+
+_RAW_CHUNKED_HEADERS = (
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"
+)
+
+
+def _chunked_wire(body: bytes, chunk_size: int = 65536) -> bytes:
+    pieces = [body[offset : offset + chunk_size] for offset in range(0, len(body), chunk_size)]
+    framing = b"".join(f"{len(piece):x}\r\n".encode("ascii") + piece + b"\r\n" for piece in pieces)
+    return framing + b"0\r\n\r\n"
+
+
+def _json_body_of_size(size: int) -> bytes:
+    prefix = b'{"pad":"'
+    suffix = b'"}'
+    assert size >= len(prefix) + len(suffix)
+    return prefix + b"a" * (size - len(prefix) - len(suffix)) + suffix
+
+
+class RawChunkedServer:
+    """Loopback server writing exact (including malformed) chunked framing.
+
+    ``http.server`` always emits well-formed chunk sizes, so the hostile
+    framing cases need a raw socket.  The body after a rejected size line is
+    large enough that a whole-stream read is visible in the client-side count.
+    """
+
+    def __init__(self, wire_body: bytes) -> None:
+        self._wire_body = wire_body
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(4)
+        self._listener.settimeout(0.1)
+        self.requests: list[bytes] = []
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self._listener.getsockname()[1]}"
+
+    def _serve(self) -> None:
+        while True:
+            try:
+                connection, _ = self._listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            with connection:
+                connection.settimeout(5)
+                request = bytearray()
+                try:
+                    while b"\r\n\r\n" not in request:
+                        piece = connection.recv(65536)
+                        if not piece:
+                            break
+                        request.extend(piece)
+                    headers, _, body = request.partition(b"\r\n\r\n")
+                    length = 0
+                    for line in headers.split(b"\r\n")[1:]:
+                        name, _, value = line.partition(b":")
+                        if name.strip().lower() == b"content-length":
+                            length = int(value.strip() or b"0")
+                    while len(body) < length:
+                        piece = connection.recv(65536)
+                        if not piece:
+                            break
+                        body += piece
+                    self.requests.append(bytes(headers + b"\r\n\r\n" + body))
+                    # Draining the request body before close avoids a reset
+                    # that would discard the tail of the response on loopback.
+                    connection.sendall(_RAW_CHUNKED_HEADERS + self._wire_body)
+                except OSError:
+                    pass
+
+    def __enter__(self) -> RawChunkedServer:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info: Any) -> bool:
+        self._listener.close()
+        self._thread.join(timeout=5)
+        return False
+
+
 @pytest.mark.parametrize(
     ("status", "code"),
     _STATUS_CASES,
@@ -155,6 +283,229 @@ def test_http_status_mapping(
     assert spy.calls == []
     captured = capsys.readouterr()
     assert (captured.out, captured.err) == ("", "")
+
+
+_FETCH_STATUS_CASES = [
+    (400, "invalid_request"),
+    (401, "unauthorized"),
+    (402, "insufficient_balance"),
+    (403, "forbidden"),
+    (404, "not_found"),
+    (408, "timeout"),
+    (413, "request_too_large"),
+    (429, "rate_limited"),
+    (500, "upstream_error"),
+    (504, "timeout"),
+]
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    _FETCH_STATUS_CASES,
+    ids=[str(status) for status, _ in _FETCH_STATUS_CASES],
+)
+def test_fetch_documented_statuses_map_without_body_reads(
+    status: int,
+    code: str,
+    stub: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = f"fetch-reflected-{status}"
+    body = json.dumps({"error": marker, "key": FAKE_KEY}).encode("utf-8")
+    server = stub(
+        lambda request: StubResponse(
+            status=status,
+            body=body,
+            headers={"Location": "https://elsewhere.invalid/fetch"},
+        )
+    )
+    spy = ResponseReadSpy()
+    spy.install(monkeypatch)
+
+    reply = transport.post_tool(
+        server.base_url, "fetch", {"url": "https://example.com/page"}, _credential()
+    )
+
+    assert reply == HttpReply(status=status, payload=None)
+    assert len(server.requests) == 1
+    assert server.requests[0].path == "/v1/tools/fetch"
+    assert server.requests[0].json == {"url": "https://example.com/page"}
+    failure = status_failure(reply.status, "fetch")
+    _assert_safe_failure(failure, code, status)
+    assert any("deepsearch-axi fetch" in hint for hint in failure.help)
+    assert not any("deepsearch-axi search" in hint for hint in failure.help)
+    for text in (failure.message, *failure.help):
+        assert marker not in text
+        assert "elsewhere.invalid" not in text
+    assert spy.calls == []
+
+
+def test_non_http_reply_is_transport_error() -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    accepted: list[bytes] = []
+
+    def serve_garbage() -> None:
+        try:
+            connection, _ = listener.accept()
+        except OSError:
+            return
+        with connection:
+            accepted.append(connection.recv(65536))
+            connection.sendall(b"GARBAGE NOT HTTP\r\n\r\n")
+
+    thread = threading.Thread(target=serve_garbage, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(DeepsearchError) as garbage:
+            transport.post_tool(
+                f"http://127.0.0.1:{port}",
+                "search",
+                {"query": "q"},
+                _credential(),
+                timeout_seconds=5,
+            )
+    finally:
+        listener.close()
+        thread.join(timeout=5)
+
+    _assert_safe_failure(garbage.value.failure, "transport_error", None)
+    _assert_no_raw_exception(garbage.value, ("BadStatusLine", "GARBAGE", "Traceback"))
+    assert len(accepted) == 1
+    assert accepted[0].startswith(b"POST /v1/tools/search ")
+
+
+_OVERFLOW_BODIES = [
+    pytest.param(b'{"results":[],"unknown":1e999}', id="unknown-field"),
+    pytest.param(b'{"results":[{"title":"t","rerank_score":1e999}]}', id="known-numeric-field"),
+    pytest.param(b'{"results":[],"unknown":-1e999}', id="negative-overflow"),
+]
+
+
+@pytest.mark.parametrize("body", _OVERFLOW_BODIES)
+def test_overflowing_json_numbers_are_invalid_response(
+    body: bytes,
+    stub: Any,
+) -> None:
+    server = stub(lambda request: StubResponse(status=200, body=body))
+
+    with pytest.raises(DeepsearchError) as overflow:
+        transport.post_tool(server.base_url, "search", {"query": "q"}, _credential())
+
+    _assert_safe_failure(overflow.value.failure, "invalid_response", None)
+    _assert_no_raw_exception(overflow.value, ("1e999", "inf", "Traceback"))
+    assert len(server.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("size_line", "code"),
+    [(b"-1", "transport_error"), (b"90000a", "response_too_large")],
+    ids=["negative-size", "oversized-size"],
+)
+def test_chunked_malformed_size_is_rejected_before_body_read(
+    size_line: bytes,
+    code: str,
+    response_read_counter: list[CountingReader],
+) -> None:
+    # A CPython HTTPResponse.read() delegates the wire chunk size straight to
+    # _safe_read(), so "-1" consumes the whole remaining stream.  The transport
+    # must validate framing first and only consume the size line.
+    filler = b"a" * (256 * 1024)
+    wire_body = size_line + b"\r\n" + filler + b"\r\n0\r\n\r\n"
+    with RawChunkedServer(wire_body) as server:
+        with pytest.raises(DeepsearchError) as failure:
+            transport.post_tool(
+                server.base_url, "search", {"query": "q"}, _credential(), timeout_seconds=5
+            )
+    assert failure.value.failure.code == code
+    assert failure.value.failure.http_status is None
+    _assert_no_raw_exception(failure.value, ("IncompleteRead", "ValueError", "Traceback"))
+    assert len(server.requests) == 1
+    assert server.requests[0].startswith(b"POST /v1/tools/search ")
+    assert sum(reader.bytes_read for reader in response_read_counter) <= 64
+
+
+def test_chunked_response_at_exact_limit_succeeds(
+    response_read_counter: list[CountingReader],
+) -> None:
+    body = _json_body_of_size(MAX_RESPONSE_BYTES)
+    with RawChunkedServer(_chunked_wire(body)) as server:
+        reply = transport.post_tool(
+            server.base_url, "search", {"query": "q"}, _credential(), timeout_seconds=10
+        )
+    assert reply.status == 200
+    assert isinstance(reply.payload, dict)
+    assert len(reply.payload["pad"]) == MAX_RESPONSE_BYTES - len(b'{"pad":"') - len(b'"}')
+    assert len(server.requests) == 1
+    # Framing overhead is ~17 bytes per 64 KiB chunk; the point is that the
+    # reader never runs away past the cap.
+    assert sum(reader.bytes_read for reader in response_read_counter) <= MAX_RESPONSE_BYTES + 8192
+
+
+def test_chunked_response_over_limit_fails_without_whole_body_read(
+    response_read_counter: list[CountingReader],
+) -> None:
+    body = _json_body_of_size(MAX_RESPONSE_BYTES + 1)
+    with RawChunkedServer(_chunked_wire(body)) as server:
+        with pytest.raises(DeepsearchError) as too_large:
+            transport.post_tool(
+                server.base_url, "search", {"query": "q"}, _credential(), timeout_seconds=10
+            )
+    _assert_safe_failure(too_large.value.failure, "response_too_large", None)
+    assert len(server.requests) == 1
+    assert sum(reader.bytes_read for reader in response_read_counter) <= MAX_RESPONSE_BYTES + 8192
+
+
+@pytest.mark.parametrize(
+    "credential_value",
+    ["bad\r\nX-Injected: 1", "caf\u00e9-\u4e2d"],
+    ids=["header-control", "non-latin1"],
+)
+def test_unencodable_credential_fails_as_safe_failure(credential_value: str, stub: Any) -> None:
+    # Dependency-level header encoding errors must not escape as raw exceptions
+    # whose messages echo the bearer value.
+    server = stub(lambda request: json_response({"results": []}))
+    credential = Credential(value=credential_value, source="env")
+
+    with pytest.raises(DeepsearchError) as unsafe:
+        transport.post_tool(server.base_url, "search", {"query": "q"}, credential)
+
+    assert unsafe.value.failure.code in {"invalid_config", "transport_error"}
+    assert unsafe.value.failure.http_status is None
+    _assert_no_raw_exception(
+        unsafe.value,
+        ("Invalid header", "latin-1", "codec", "X-Injected", "Bearer", "Traceback"),
+    )
+    assert server.requests == []
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["https://" + "e" * 64 + ".invalid", "https://\ud800.invalid"],
+    ids=["long-label", "surrogate"],
+)
+def test_invalid_hostname_fails_as_safe_failure(
+    base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The session netguard answers socket.create_connection before the platform
+    # IDNA encoder runs; mirror that encoder here and prove the UnicodeError is
+    # mapped while no socket is ever opened.
+    def encode_then_block(address: tuple[str, int], *args: Any, **kwargs: Any) -> None:
+        address[0].encode("idna")
+        raise AssertionError("external network access is blocked")
+
+    monkeypatch.setattr(socket, "create_connection", encode_then_block)
+
+    with pytest.raises(DeepsearchError) as unsafe:
+        transport.post_tool(base_url, "search", {"query": "q"}, _credential(), timeout_seconds=1)
+
+    _assert_safe_failure(unsafe.value.failure, "transport_error", None)
+    _assert_no_raw_exception(
+        unsafe.value,
+        ("label empty or too long", "Invalid character", "Unicode", "Traceback"),
+    )
 
 
 def test_transport_failures(stub: Any, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import http.client
 import json
+import math
+import re
 import ssl
-from typing import NoReturn
+from typing import BinaryIO, NoReturn
 from urllib.parse import urlsplit
 
 from deepsearch_axi._version import VERSION
@@ -36,6 +38,8 @@ from deepsearch_axi.models import (
 )
 
 _READ_CHUNK = 65536
+_MAX_CHUNK_LINE = 1024
+_CHUNK_SIZE = re.compile(rb"[0-9A-Fa-f]{1,16}\Z")
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 
@@ -60,6 +64,14 @@ def build_fetch_body(url: str) -> JsonObject:
 def _reject(value: str) -> NoReturn:
     """Reject ``NaN``/``Infinity`` JSON constants before validation sees them."""
     raise ValueError("non-finite JSON constant")
+
+
+def _parse_float(value: str) -> float:
+    """Reject JSON numbers such as ``1e999`` that overflow to infinity."""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite JSON number")
+    return number
 
 
 def _endpoint(base_url: str) -> tuple[str, str, int | None]:
@@ -99,19 +111,93 @@ def _open_connection(
     return http.client.HTTPConnection(host, port, timeout=timeout_seconds)
 
 
-def _read_bounded(response: http.client.HTTPResponse, tool: Tool) -> bytes:
-    """Read at most ``MAX_RESPONSE_BYTES`` plus one byte, then stop."""
+def _read_chunk_line(fp: BinaryIO, tool: Tool) -> bytes:
+    """Read one bounded chunk-framing line, rejecting a runaway line."""
+    line = fp.readline(_MAX_CHUNK_LINE + 1)
+    if not line or not line.endswith(b"\n"):
+        raise DeepsearchError(transport_failure(tool)) from None
+    return line
+
+
+def _read_chunk_size(fp: BinaryIO, tool: Tool) -> int:
+    """Return the next chunk size after validating the framing line.
+
+    Validating before reading any chunk data is what keeps a hostile size such
+    as ``-1`` (which CPython's ``HTTPResponse`` would pass to
+    ``_safe_read(-1)``) from consuming the unbounded remainder of the stream.
+    """
+    line = _read_chunk_line(fp, tool)
+    if line.endswith(b"\r\n"):
+        line = line[:-2]
+    elif line.endswith(b"\n"):
+        line = line[:-1]
+    size_text = line.split(b";", 1)[0]
+    if not _CHUNK_SIZE.fullmatch(size_text):
+        raise DeepsearchError(transport_failure(tool)) from None
+    return int(size_text, 16)
+
+
+def _read_chunked_bounded(fp: BinaryIO, tool: Tool) -> bytes:
+    """Read a chunked body in bounded pieces with an explicit byte budget."""
     chunks: list[bytes] = []
     total = 0
     while True:
-        chunk = response.read(min(_READ_CHUNK, MAX_RESPONSE_BYTES + 1 - total))
-        if not chunk:
+        chunk_size = _read_chunk_size(fp, tool)
+        if chunk_size == 0:
+            return b"".join(chunks)
+        if chunk_size > MAX_RESPONSE_BYTES - total:
+            raise DeepsearchError(response_too_large(tool)) from None
+        remaining = chunk_size
+        while remaining:
+            piece = fp.read(min(_READ_CHUNK, remaining))
+            if not piece:
+                raise DeepsearchError(transport_failure(tool)) from None
+            remaining -= len(piece)
+            total += len(piece)
+            if total > MAX_RESPONSE_BYTES:
+                raise DeepsearchError(response_too_large(tool)) from None
+            chunks.append(piece)
+        if fp.read(2) != b"\r\n":
+            raise DeepsearchError(transport_failure(tool)) from None
+
+
+def _read_length_bounded(response: http.client.HTTPResponse, tool: Tool) -> bytes:
+    """Read a Content-Length or EOF-delimited body without over-reading."""
+    length = response.length
+    if length is not None and length > MAX_RESPONSE_BYTES:
+        # The declared size alone proves the response is too large.
+        raise DeepsearchError(response_too_large(tool)) from None
+    chunks: list[bytes] = []
+    total = 0
+    while length is None or length > 0:
+        amount = min(_READ_CHUNK, MAX_RESPONSE_BYTES + 1 - total)
+        if length is not None:
+            amount = min(amount, length)
+        piece = response.fp.read(amount)
+        if not piece:
+            if length is not None:
+                # The peer closed before the declared Content-Length arrived.
+                raise DeepsearchError(transport_failure(tool)) from None
             break
-        total += len(chunk)
+        total += len(piece)
         if total > MAX_RESPONSE_BYTES:
-            raise DeepsearchError(response_too_large(tool))
-        chunks.append(chunk)
+            raise DeepsearchError(response_too_large(tool)) from None
+        chunks.append(piece)
+        if length is not None:
+            length -= len(piece)
     return b"".join(chunks)
+
+
+def _read_bounded(response: http.client.HTTPResponse, tool: Tool) -> bytes:
+    """Read at most ``MAX_RESPONSE_BYTES`` plus one byte, then stop.
+
+    Chunked framing is parsed here rather than delegated to
+    ``HTTPResponse.read``: CPython trusts the wire chunk size, so a negative
+    or oversized size can turn a bounded read into a whole-stream read.
+    """
+    if response.chunked:
+        return _read_chunked_bounded(response.fp, tool)
+    return _read_length_bounded(response, tool)
 
 
 def post_tool(
@@ -159,16 +245,22 @@ def post_tool(
         data = _read_bounded(response, tool)
         try:
             text = data.decode("utf-8")
-            payload = json.loads(text, parse_constant=_reject)
+            payload = json.loads(text, parse_constant=_reject, parse_float=_parse_float)
         except (ValueError, RecursionError):
-            # JSONDecodeError, UnicodeDecodeError and rejected constants are
-            # all ValueError subclasses; deeply nested JSON raises RecursionError.
+            # JSONDecodeError, UnicodeDecodeError, overflowing numbers and
+            # rejected constants are all ValueError subclasses; deeply nested
+            # JSON raises RecursionError.
             raise DeepsearchError(invalid_response(tool)) from None
         if not isinstance(payload, dict):
-            raise DeepsearchError(invalid_response(tool))
+            raise DeepsearchError(invalid_response(tool)) from None
         return HttpReply(status=200, payload=payload)
     except DeepsearchError:
         raise
+    except (ValueError, UnicodeError):
+        # Header/request encoding or hostname IDNA failures raised by
+        # http.client before any byte reaches the wire.  The exception text
+        # can echo the credential, so it is never retained.
+        raise DeepsearchError(transport_failure(tool)) from None
     except TimeoutError:
         raise DeepsearchError(timeout_failure(tool)) from None
     except (http.client.HTTPException, OSError):
