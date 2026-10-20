@@ -65,6 +65,7 @@ _COUNT_REJECT = [
     pytest.param("\u0661", id="non-ascii-digit"),
     pytest.param("50x", id="trailing-junk"),
     pytest.param("9" * 5000, id="huge-digit-string"),
+    pytest.param("0" * 5000, id="all-zeros-huge"),
 ]
 
 
@@ -77,6 +78,18 @@ def test_parse_count_accepts_boundaries(token: str, expected: int) -> None:
 def test_parse_count_rejects_invalid_tokens(token: str) -> None:
     failure = _usage_failure(validation.parse_count, token)
     assert failure.message == "invalid value for --count"
+
+
+def test_length_boundaries_count_code_points() -> None:
+    """Limits are Unicode code points: 128 emoji or 64 base+combining pairs fit."""
+    assert validation.validate_query("\U0001f40d" * 128) is None
+    failure = _usage_failure(validation.validate_query, "\U0001f40d" * 129)
+    assert failure.message == "invalid value for <query>"
+    assert validation.validate_query("e\u0301" * 64) is None
+    _usage_failure(validation.validate_query, "e\u0301" * 65)
+    assert validation.validate_ori_question("\U0001f40d" * 128) is None
+    failure = _usage_failure(validation.validate_ori_question, "\U0001f40d" * 129)
+    assert failure.message == "invalid value for --ori-question"
 
 
 _ORI_ACCEPT = [

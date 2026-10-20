@@ -357,6 +357,11 @@ def test_help_tolerates_missing_positionals_and_unvalidated_values() -> None:
             id="help-unknown-flag",
         ),
         pytest.param(
+            ["--help", "--json"],
+            "unknown flag --json for deepsearch-axi",
+            id="root-help-unknown-flag",
+        ),
+        pytest.param(
             ["search", "a", "b", "--help"],
             "too many arguments for search",
             id="help-extra-positional",
@@ -366,6 +371,46 @@ def test_help_tolerates_missing_positionals_and_unvalidated_values() -> None:
 def test_usage_messages(argv: list[str], message: str) -> None:
     failure = _usage_failure(argv)
     assert failure.message == message
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        pytest.param(["search", "q", "-c", "5"], "unknown flag -c for search", id="short-count"),
+        pytest.param(["search", "q", "--need"], "unknown flag --need for search", id="prefix-need"),
+        pytest.param(
+            ["search", "q", "--ori", "why"], "unknown flag --ori for search", id="prefix-ori"
+        ),
+        pytest.param(
+            ["search", "q", "--loc", "127.0.0.1"],
+            "unknown flag --loc for search",
+            id="prefix-localization",
+        ),
+        pytest.param(
+            ["search", "q", "--fi", "title"], "unknown flag --fi for search", id="prefix-fields"
+        ),
+        pytest.param(["search", "q", "--fu"], "unknown flag --fu for search", id="prefix-full"),
+        pytest.param(
+            ["fetch", "https://example.com", "--fu"],
+            "unknown flag --fu for fetch",
+            id="fetch-prefix-full",
+        ),
+        pytest.param(["setup", "--ag", "codex"], "unknown flag --ag for setup", id="setup-prefix"),
+        pytest.param(
+            ["session", "start", "--ag", "codex", "--project", "/tmp/p"],
+            "unknown flag --ag for session start",
+            id="session-prefix-agent",
+        ),
+        pytest.param(
+            ["session", "start", "--agent", "codex", "--proj", "/tmp/p"],
+            "unknown flag --proj for session start",
+            id="session-prefix-project",
+        ),
+    ],
+)
+def test_abbreviated_and_short_flags_are_unknown(argv: list[str], message: str) -> None:
+    """No prefix or short-form matching: every such token is a usage error."""
+    assert _usage_failure(argv).message == message
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,16 @@ from urllib.parse import urlsplit
 from deepsearch_axi.failures import invalid_base_url
 from deepsearch_axi.models import OFFICIAL_ORIGIN, DeepsearchError
 
+# RFC 3986 reg-name characters, minus the pct-encoded escapes the override
+# policy never needs; bare IPv6 literals use hex digits, colons, and dots.
+_REG_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.")
+_IP_LITERAL_CHARS = frozenset("0123456789abcdefABCDEF:.")
+
+
+def _has_valid_host(hostname: str) -> bool:
+    allowed = _IP_LITERAL_CHARS if ":" in hostname else _REG_NAME_CHARS
+    return all(char in allowed for char in hostname)
+
 
 def _has_forbidden_code(value: str) -> bool:
     for char in value:
@@ -41,6 +51,8 @@ def validate_base_url(value: str | None) -> str:
     if scheme not in ("http", "https"):
         raise DeepsearchError(invalid_base_url())
     if not parts.netloc or not hostname:
+        raise DeepsearchError(invalid_base_url())
+    if not _has_valid_host(hostname):
         raise DeepsearchError(invalid_base_url())
     if port is not None and not 1 <= port <= 65535:
         raise DeepsearchError(invalid_base_url())

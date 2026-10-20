@@ -262,6 +262,24 @@ def test_literal_dotenv(
         assert credential.source == "cwd_dotenv"
 
 
+@pytest.mark.parametrize(("content", "expected", "reason"), _DOTENV_CASES)
+def test_literal_dotenv_never_mutates_environment(
+    tmp_path: Path, content: bytes, expected: str | None, reason: str | None
+) -> None:
+    """Every grammar case, valid or rejected, leaves os.environ byte-for-byte unchanged."""
+    cwd = tmp_path / "project"
+    home = tmp_path / "home"
+    cwd.mkdir(exist_ok=True)
+    home.mkdir(exist_ok=True)
+    (cwd / ".env").write_bytes(content)
+    before = dict(os.environ)
+    try:
+        resolve_credential({}, cwd, home)
+    except DeepsearchError:
+        pass
+    assert dict(os.environ) == before
+
+
 def test_dotenv_blank_falls_through_to_home(tmp_path: Path) -> None:
     cwd = tmp_path / "project"
     home = tmp_path / "home"

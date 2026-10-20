@@ -94,6 +94,28 @@ def test_origin_rejects_unsafe_values(value: str) -> None:
 @pytest.mark.parametrize(
     "value",
     [
+        pytest.param("https://api.deepseek.com\\x", id="backslash"),
+        pytest.param("https://example.com\\evil", id="backslash-host"),
+        pytest.param("https://api.deepseek.com|x", id="pipe"),
+        pytest.param("https://api.deepseek.com<x>", id="angle-brackets"),
+        pytest.param("https://api.deepseek.com^x", id="caret"),
+        pytest.param("https://api.deepseek.com`x", id="backtick"),
+        pytest.param("https://api.deepseek.com{x}", id="braces"),
+        pytest.param('https://api.deepseek."x', id="double-quote"),
+        pytest.param("http://127.0.0.1\\x", id="loopback-backslash"),
+        pytest.param("http://127.0.0.1|x", id="loopback-pipe"),
+    ],
+)
+def test_origin_rejects_characters_illegal_in_hosts(value: str) -> None:
+    """Hosts outside RFC 3986 reg-name/IP-literal syntax are malformed origins."""
+    with pytest.raises(models.DeepsearchError) as info:
+        validate_base_url(value)
+    assert info.value.failure.code == "invalid_config"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
         "ftp://secret-marker.invalid",
         "https://u:p@secret-marker.invalid",
         "https://secret-marker.invalid/v1",
