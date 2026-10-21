@@ -37,13 +37,13 @@ PLACEHOLDERS = {
 }
 
 
-def _row(snippet: str = "short snippet") -> dict:
+def _row(snippet: str = "short snippet", content: str = "page content") -> dict:
     return {
         "title": "Title",
         "url": "https://example.com/a",
         "snippet": snippet,
         "summary": "summary text",
-        "content": "page content",
+        "content": content,
         "date": "2025-01-02",
         "authority": 1,
         "rerank_score": 2,
@@ -112,6 +112,21 @@ SCENARIOS = {
         SearchOptions(query="q", need_content=True),
         OutputOptions(fields=DEFAULT_FIELDS),
         [_row()],
+    ),
+    "truncated_need_content_with_explicit_default_fields": (
+        SearchOptions(query="q", need_content=True),
+        OutputOptions(fields=DEFAULT_FIELDS),
+        [_row(snippet="x" * 250)],
+    ),
+    "truncated_content_optin_with_original_and_localization": (
+        SearchOptions(
+            query="q",
+            count=5,
+            ori_question="why is it fast",
+            localization="203.0.113.7",
+        ),
+        OutputOptions(fields=("title", "url", "content")),
+        [_row(content="c" * 1001)],
     ),
 }
 
