@@ -1,0 +1,483 @@
+{
+  "action_log": "action_log.jsonl",
+  "changed_files": [
+    "README.md",
+    "pyproject.toml",
+    "scripts/generate_skill.py",
+    "scripts/verify_evidence.py",
+    "src/deepsearch_axi/_entry.py",
+    "src/deepsearch_axi/cli.py",
+    "src/deepsearch_axi/documents.py",
+    "src/deepsearch_axi/transport.py",
+    "tests/test_delivery_contract.py",
+    "tests/fixtures/evidence/complete/README.md",
+    "tests/fixtures/evidence/failing/README.md"
+  ],
+  "feature_branch": "feature/b11c205b-deepsearch-axi-cli",
+  "gates": [
+    {
+      "command": "python -m pytest -q tests/test_packaging.py",
+      "exit_code": 0,
+      "id": "AC-01",
+      "log": "logs/AC-01.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_installation.py",
+      "exit_code": 0,
+      "id": "AC-02",
+      "log": "logs/AC-02.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_requests.py::test_search_contract",
+      "exit_code": 0,
+      "id": "AC-03",
+      "log": "logs/AC-03.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_requests.py::test_query_preservation",
+      "exit_code": 0,
+      "id": "AC-04",
+      "log": "logs/AC-04.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_requests.py::test_search_validation",
+      "exit_code": 0,
+      "id": "AC-05",
+      "log": "logs/AC-05.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_requests.py::test_fetch_contract",
+      "exit_code": 0,
+      "id": "AC-06",
+      "log": "logs/AC-06.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_auth.py::test_precedence",
+      "exit_code": 1,
+      "id": "AC-07",
+      "log": "logs/AC-07.log",
+      "status": "failed",
+      "summary": "auth precedence gate failed in this synthetic failing fixture",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_auth.py::test_literal_dotenv",
+      "exit_code": 0,
+      "id": "AC-08",
+      "log": "logs/AC-08.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_security.py::test_origin_policy",
+      "exit_code": 0,
+      "id": "AC-09",
+      "log": "logs/AC-09.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_security.py::test_redirects",
+      "exit_code": 0,
+      "id": "AC-10",
+      "log": "logs/AC-10.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_errors.py::test_http_status_mapping",
+      "exit_code": 0,
+      "id": "AC-11",
+      "log": "logs/AC-11.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_errors.py::test_transport_failures",
+      "exit_code": 0,
+      "id": "AC-12",
+      "log": "logs/AC-12.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_security.py::test_redaction",
+      "exit_code": 0,
+      "id": "AC-13",
+      "log": "logs/AC-13.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_output.py::test_toon_boundary",
+      "exit_code": 0,
+      "id": "AC-14",
+      "log": "logs/AC-14.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_output.py::test_search_projection",
+      "exit_code": 0,
+      "id": "AC-15",
+      "log": "logs/AC-15.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_output.py::test_response_totals_and_empty",
+      "exit_code": 0,
+      "id": "AC-16",
+      "log": "logs/AC-16.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_output.py::test_fetch_markdown",
+      "exit_code": 0,
+      "id": "AC-17",
+      "log": "logs/AC-17.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_output.py::test_truncation_boundaries",
+      "exit_code": 0,
+      "id": "AC-18",
+      "log": "logs/AC-18.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_output.py::test_full_and_hints",
+      "exit_code": null,
+      "id": "AC-19",
+      "log": "logs/AC-19.log",
+      "status": "skipped",
+      "summary": "full-mode gate was skipped in this synthetic failing fixture",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_errors.py::test_response_limits_and_schema",
+      "exit_code": 0,
+      "id": "AC-20",
+      "log": "logs/AC-20.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_cli.py::test_usage_and_no_prompts",
+      "exit_code": 0,
+      "id": "AC-21",
+      "log": "logs/AC-21.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_home_help.py::test_home_readiness",
+      "exit_code": 0,
+      "id": "AC-22",
+      "log": "logs/AC-22.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_home_help.py::test_command_help",
+      "exit_code": 0,
+      "id": "AC-23",
+      "log": "logs/AC-23.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_version.py",
+      "exit_code": 0,
+      "id": "AC-24",
+      "log": "logs/AC-24.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_setup.py::test_explicit_opt_in_and_scope",
+      "exit_code": 0,
+      "id": "AC-25",
+      "log": "logs/AC-25.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_setup.py::test_native_configuration",
+      "exit_code": 0,
+      "id": "AC-26",
+      "log": "logs/AC-26.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_setup.py::test_idempotence_and_repair",
+      "exit_code": 0,
+      "id": "AC-27",
+      "log": "logs/AC-27.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_setup.py::test_executable_portability",
+      "exit_code": 0,
+      "id": "AC-28",
+      "log": "logs/AC-28.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_setup.py::test_conflicts_and_write_safety",
+      "exit_code": 0,
+      "id": "AC-29",
+      "log": "logs/AC-29.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_sessions.py::test_native_start_end_execution",
+      "exit_code": 0,
+      "id": "AC-30",
+      "log": "logs/AC-30.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_opencode.py",
+      "exit_code": 0,
+      "id": "AC-31",
+      "log": "logs/AC-31.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_sessions.py::test_payload_scope_privacy_and_idempotence",
+      "exit_code": 0,
+      "id": "AC-32",
+      "log": "logs/AC-32.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_sessions.py::test_state_bounds_and_concurrency",
+      "exit_code": 0,
+      "id": "AC-33",
+      "log": "logs/AC-33.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python scripts/generate_skill.py --check",
+      "exit_code": 0,
+      "id": "AC-34",
+      "log": "logs/AC-34.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_skill.py",
+      "exit_code": 0,
+      "id": "AC-35",
+      "log": "logs/AC-35.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_repository.py",
+      "exit_code": 0,
+      "id": "AC-36",
+      "log": "logs/AC-36.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_ci_contract.py",
+      "exit_code": 0,
+      "id": "AC-37",
+      "log": "logs/AC-37.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m ruff check .",
+      "exit_code": 0,
+      "id": "AC-38",
+      "log": "logs/AC-38.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m ruff format --check .",
+      "exit_code": 0,
+      "id": "AC-39",
+      "log": "logs/AC-39.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "rumdl check --disable MD013 README.md .agents/skills/deepsearch-axi/SKILL.md",
+      "exit_code": 0,
+      "id": "AC-40",
+      "log": "logs/AC-40.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q --junitxml=\"$ARTIFACTS/pytest.xml\"",
+      "exit_code": 0,
+      "id": "AC-41",
+      "log": "logs/AC-41.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m build && python -m twine check dist/*",
+      "exit_code": 0,
+      "id": "AC-42",
+      "log": "logs/AC-42.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python scripts/verify_evidence.py --artifacts \"$ARTIFACTS\" --prd \"$ARTIFACTS/plan/prd.md\"",
+      "exit_code": null,
+      "id": "AC-43",
+      "log": "logs/AC-43.log",
+      "status": "pending",
+      "summary": "Self-record bootstrap: verifier computes its own result; no prior AC-43 success is required.",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "git branch --show-current && git log -1 --format='%H%n%B' && git diff --name-only 2e2bd0a...HEAD && git status --porcelain --untracked-files=no",
+      "exit_code": 0,
+      "id": "AC-44",
+      "log": "logs/AC-44.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "command": "python -m pytest -q tests/test_delivery_contract.py",
+      "exit_code": 0,
+      "id": "AC-45",
+      "log": "logs/AC-45.log",
+      "status": "passed",
+      "summary": "synthetic gate record for delivery-contract tests",
+      "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+      "tested_tree": "89abcdef0123456789abcdef0123456789abcdef"
+    }
+  ],
+  "handoff": "handoff.md",
+  "initial_commit": "2e2bd0a86b3d681b256164b165ffddfcd99e4731",
+  "initial_tree": "9fe3c3904d7d3e83def844ea1b63f5b8e79410c7",
+  "project": "deepsearch-axi",
+  "refs": "refs.json",
+  "reports": {
+    "qa": "reports/qa.json",
+    "review": "reports/review.json",
+    "synthesis": "reports/synthesis.json"
+  },
+  "schema_version": 1,
+  "tested_commit": "0123456789abcdef0123456789abcdef01234567",
+  "tested_tree": "89abcdef0123456789abcdef0123456789abcdef",
+  "unmet_requirements": []
+}

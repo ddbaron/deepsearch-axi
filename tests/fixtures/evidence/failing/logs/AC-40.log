@@ -1,0 +1,3 @@
+AC-40 synthetic evidence log
+command: rumdl check --disable MD013 README.md .agents/skills/deepsearch-axi/SKILL.md
+result: passed

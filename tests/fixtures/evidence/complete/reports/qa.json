@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "area": "security",
+      "description": "Adversarial origin, userinfo and proxy inputs exercised through the CLI.",
+      "id": "QA-CASE-1",
+      "result": "pass"
+    },
+    {
+      "area": "sessions",
+      "description": "Concurrent lifecycle events and state bounds exercised with isolated HOME.",
+      "id": "QA-CASE-2",
+      "result": "pass"
+    }
+  ],
+  "findings": [
+    {
+      "id": "QA-1",
+      "resolution": "Resolved by rejecting non-loopback transport before any request is built.",
+      "severity": "security",
+      "status": "resolved",
+      "summary": "Synthetic adversarial QA finding for the delivery-contract fixture."
+    }
+  ],
+  "reviewed_commit": "0123456789abcdef0123456789abcdef01234567",
+  "reviewed_tree": "89abcdef0123456789abcdef0123456789abcdef",
+  "reviewer": "reviewer-beta",
+  "role": "deeper-qa",
+  "verdict": "pass after resolutions"
+}

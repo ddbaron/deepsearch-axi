@@ -1,0 +1,3 @@
+AC-39 synthetic evidence log
+command: python -m ruff format --check .
+result: passed

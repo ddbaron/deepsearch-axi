@@ -1,0 +1,43 @@
+{
+  "cases": [
+    {
+      "area": "transport",
+      "description": "Redirect and non-200 body handling inspected against AC-10/AC-11.",
+      "id": "REV-CASE-1",
+      "result": "pass"
+    },
+    {
+      "area": "documents",
+      "description": "Truncation boundaries and hint budgets exercised against AC-18/AC-19.",
+      "id": "REV-CASE-2",
+      "result": "pass"
+    },
+    {
+      "area": "delivery",
+      "description": "Evidence manifest and handoff fields compared with the PRD.",
+      "id": "REV-CASE-3",
+      "result": "pass"
+    }
+  ],
+  "findings": [
+    {
+      "id": "REV-1",
+      "resolution": "Hint emission is gated on actual truncation; a regression case was added.",
+      "severity": "correctness",
+      "status": "resolved",
+      "summary": "A truncation hint could appear when no field was truncated."
+    },
+    {
+      "id": "REV-2",
+      "resolution": "Redirects are refused before a second request; redaction is re-tested.",
+      "severity": "security",
+      "status": "resolved",
+      "summary": "A redirect response could have forwarded the credential."
+    }
+  ],
+  "reviewed_commit": "0123456789abcdef0123456789abcdef01234567",
+  "reviewed_tree": "89abcdef0123456789abcdef0123456789abcdef",
+  "reviewer": "reviewer-alpha",
+  "role": "independent-review",
+  "verdict": "pass after resolutions"
+}
