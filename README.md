@@ -45,7 +45,7 @@ deepsearch-axi search '"structured concurrency" -site:reddit.com' --count 5 --fi
 deepsearch-axi search -- "-site:example.com tokio"
 ```
 
-`--count` accepts 1-50 and defaults to 10. `--need-content` requests page content but does not change the default projection. `--ori-question` supplies a 1-128 character reranking question. `--localization` accepts an IPv4 or IPv6 address and defaults to empty. `--fields` replaces the default `title,url,snippet` projection with an ordered allowlist drawn from `title`, `url`, `snippet`, `summary`, `content`, `date`, `authority`, `rerank_score`, `site_name`, and `site_icon`; space around comma-separated names is trimmed, while the query itself is never trimmed. `--full` removes text preview limits for the selected fields.
+`--count` accepts 1-50 and defaults to 10. `--need-content` alone adds a fourth `content` column. An explicit `--fields` projection replaces the defaults and preserves the requested order, so a projection wins over `--need-content`. `--fields` draws from an ordered allowlist of `title`, `url`, `snippet`, `summary`, `content`, `date`, `authority`, `rerank_score`, `site_name`, and `site_icon`. Space around comma-separated names is trimmed, while the query itself is never trimmed. `--ori-question` supplies a 1-128 character reranking question. `--localization` accepts an IPv4 or IPv6 address and defaults to empty. `--full` removes text preview limits for the selected fields.
 
 ### `deepsearch-axi fetch <url>`
 
@@ -126,9 +126,9 @@ Dotenv files are read as UTF-8 with literal semantics. Blank lines and `#` comme
 
 ### API origin
 
-`DEEPSEEK_BASE_URL` is a process-environment-only setting that changes the API origin, not a dotenv key and not an arbitrary path prefix. Unset or empty uses `https://api.deepseek.com`. An optional trailing slash is accepted; `/v1` prefixes, non-root paths, queries, fragments, userinfo, malformed values, `localhost`, and non-numeric hostnames are rejected before any credential-bearing request.
+`DEEPSEEK_BASE_URL` is a process-environment-only setting that changes the API origin, not a dotenv key and not an arbitrary path prefix. Unset or empty uses `https://api.deepseek.com`. An optional trailing slash is accepted; `/v1` prefixes, non-root paths, queries, fragments, userinfo, and malformed values are rejected before any credential-bearing request.
 
-HTTP is permitted only for numeric loopback development origins, for example `http://127.0.0.1:8080` or `http://[::1]:8080`. A custom HTTPS origin is an operator-selected trusted endpoint that receives the API key, so enable it only when you trust the endpoint and its TLS chain; default certificate verification remains enabled. Environment proxies, netrc credentials, and automatic redirect following of any status or origin are never used.
+An HTTPS origin accepts the official hostname or any trusted custom hostname, with an optional port. It is an operator-selected trusted endpoint and credential recipient that receives the API key, so enable it only when you trust the endpoint and its TLS chain; default certificate verification remains enabled. HTTP is permitted only for numeric loopback development origins, for example `http://127.0.0.1:8080` or `http://[::1]:8080`; `localhost` and nonnumeric hostnames are rejected for HTTP before a credential-bearing request. Environment proxies, netrc credentials, and automatic redirect following of any status or origin are never used.
 
 ### Bounded requests and redaction
 
@@ -210,22 +210,16 @@ deepsearch-axi search 'site:docs.python.org "TaskGroup" after:2024-01-01' --coun
 ```
 
 ```text
-query: site:docs.python.org "TaskGroup" after:2024-01-01
+query: "site:docs.python.org \"TaskGroup\" after:2024-01-01"
 count: 1
 total: 1
 total_scope: response
-results:
-  - title: asyncio TaskGroup
-    url: https://docs.python.org/3/library/asyncio-task.html
-    summary: Task groups combine a task creation API with a convenient way to wait for all tasks.
-    date: null
-    authority: 4
-help:
-  - deepsearch-axi fetch <url>
-  - deepsearch-axi search "<query>" --fields title,url,snippet,summary
+results[1]{title,url,summary,date,authority}:
+  asyncio TaskGroup,"https://docs.python.org/3/library/asyncio-task.html",Task groups combine a task creation API with a convenient way to wait for all tasks.,null,4
+help[2]: deepsearch-axi fetch <url>,"deepsearch-axi search \"<query> site:<domain>\" --count 5 --fields title,url,summary,date,authority"
 ```
 
-The operator selects the returned URL and fetches it. Use `--full` only if the fetch output's `truncated` array reports that a field was cut; `fetch` never fetches the page directly and never invents a redirect target.
+The operator selects the returned URL and uses it in the next command. Run the plain fetch first; add `--full` only if the fetch output's `truncated` array reports that a field was cut. The CLI never makes a direct request to the page and never invents a redirect target.
 
 ```sh
 deepsearch-axi fetch <url>
