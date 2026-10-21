@@ -2,14 +2,15 @@
 
 The state file lives under the tool-owned ``.deepsearch-axi/`` directory of a
 project with a valid manifest.  It stores only hashed session identities,
-event kinds, cwd scopes and workspace counters -- never native payloads,
-transcripts, queries, content or credentials.
+event kinds, opaque cwd scope identifiers and workspace counters -- never
+native payloads, transcripts, queries, content or credentials.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,7 @@ STATE_SCHEMA = 1
 
 _SCOPE_HASH_PREFIX = "h:"
 _SCOPE_ESCAPE_PREFIX = "l:"
+_SCOPE_OPAQUE_PREFIX = "o:"
 _MAX_SCOPE_CHARS = 256
 # A state file is always written at or below MAX_STATE_FILE_BYTES, but a
 # larger-yet-valid file (e.g. a seed from an older/foreign writer) is still
@@ -75,18 +77,36 @@ def scope_for(root: Path, cwd: Path) -> str | None:
         return "."
     if len(scope) > _MAX_SCOPE_CHARS:
         return _SCOPE_HASH_PREFIX + hashlib.sha256(scope.encode("utf-8")).hexdigest()[:32]
-    if scope.startswith((_SCOPE_HASH_PREFIX, _SCOPE_ESCAPE_PREFIX)):
-        # Keep literal scopes out of the reserved hashed/escaped namespaces so a
-        # real directory named "h:<digest>" can never alias a hashed scope.
+    if scope.startswith((_SCOPE_HASH_PREFIX, _SCOPE_ESCAPE_PREFIX, _SCOPE_OPAQUE_PREFIX)):
+        # Keep literal scopes out of the reserved hashed/escaped/opaque
+        # namespaces so a real directory named "h:<digest>" or "o:<digest>"
+        # can never alias a generated identifier.
         return _SCOPE_ESCAPE_PREFIX + scope
     return scope
 
 
-def find_state_root(cwd: Path, home: Path) -> StateRoot | None:
+def opaque_scope(scope: str, secrets: Sequence[str]) -> str:
+    """Return a persisted scope identifier that never reflects a credential.
+
+    A cwd can be named after the effective key (for example an agent launched
+    from a checkout below a key-named directory).  Persisting that relative
+    path verbatim would write key material into tool state, so any scope that
+    contains a secret is replaced by a collision-safe, opaque digest.  Ordinary
+    scopes stay readable as the architecture specifies.
+    """
+    for secret in secrets:
+        if secret and secret in scope:
+            digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:32]
+            return _SCOPE_OPAQUE_PREFIX + digest
+    return scope
+
+
+def find_state_root(cwd: Path, home: Path, *, secrets: Sequence[str] = ()) -> StateRoot | None:
     """Find the nearest valid tool-owned manifest at or above ``cwd``.
 
     The walk is read-only, checks at most 64 directories, and stops after
     ``home`` or the filesystem root.  Malformed manifests are treated as absent.
+    Secret-bearing scopes are returned in their opaque persisted form.
     """
     try:
         current = Path(cwd).resolve()
@@ -97,7 +117,7 @@ def find_state_root(cwd: Path, home: Path) -> StateRoot | None:
         if _manifest_ok(current):
             scope = scope_for(current, cwd)
             if scope is not None:
-                return StateRoot(current, scope)
+                return StateRoot(current, opaque_scope(scope, secrets))
         if current == home_path:
             break
         parent = current.parent

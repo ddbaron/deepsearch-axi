@@ -8,6 +8,7 @@ plus CLI-level redaction of keys reflected by home/session paths or origins.
 from __future__ import annotations
 
 import http.client
+import io
 import json
 import netrc
 import ssl
@@ -22,7 +23,9 @@ from support.stub_server import StubResponse, StubServer, json_response
 
 from deepsearch_axi import transport
 from deepsearch_axi._version import VERSION
+from deepsearch_axi.cli import main
 from deepsearch_axi.failures import status_failure
+from deepsearch_axi.manifest import Manifest, manifest_bytes
 from deepsearch_axi.models import (
     EXIT_FAILURE,
     REDACTED,
@@ -315,3 +318,98 @@ def test_session_redacts_dotenv_key_reflected_in_cwd(tmp_path: Path) -> None:
     assert REDACTED in document["cwd"]
     assert FAKE_KEY not in run.stdout
     assert FAKE_KEY not in run.stderr
+
+
+def _opt_in(project: Path) -> Path:
+    owned = project / ".deepsearch-axi"
+    owned.mkdir()
+    manifest = Manifest(
+        project=str(project.resolve()),
+        executable="/usr/local/bin/deepsearch-axi",
+        command=("deepsearch-axi",),
+        hosts={},
+    )
+    (owned / "manifest.json").write_bytes(manifest_bytes(manifest))
+    return owned
+
+
+def _keyed_child(project: Path) -> Path:
+    child = project / FAKE_KEY
+    child.mkdir()
+    return child
+
+
+def _assert_scope_is_opaque(state_text: str, container: str) -> None:
+    assert FAKE_KEY not in state_text
+    data = json.loads(state_text)
+    if container == "scopes":
+        scopes = list(data["scopes"])
+    else:
+        scopes = [record["scope"] for record in data["sessions"]]
+    assert len(scopes) == 1
+    assert scopes[0].startswith("o:")
+    assert len(scopes[0]) == 34
+
+
+_SEARCH_PAYLOAD = {
+    "results": [
+        {
+            "title": "Example",
+            "url": "https://example.com/",
+            "snippet": "snippet",
+            "summary": "summary",
+            "content": "content",
+            "authority": 1,
+            "rerank_score": 0.5,
+        }
+    ]
+}
+
+
+@pytest.mark.parametrize("event", ["start", "end"])
+def test_session_scope_persists_no_credential_from_child_cwd(
+    tmp_path: Path, home_dir: Path, capsysbinary: pytest.CaptureFixture[bytes], event: str
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owned = _opt_in(project)
+    child = _keyed_child(project)
+    home = home_dir
+    payload = io.BytesIO(
+        json.dumps({"session_id": f"review-{event}", "cwd": str(child)}).encode("utf-8")
+    )
+    code = main(
+        ["session", event, "--agent", "codex", "--project", str(project)],
+        env={"DEEPSEEK_API_KEY": FAKE_KEY},
+        cwd=child,
+        home=home,
+        stdin=payload,
+    )
+    assert code == 0
+    captured = capsysbinary.readouterr()
+    assert FAKE_KEY.encode() not in captured.out + captured.err
+    _assert_scope_is_opaque((owned / "state.json").read_text(encoding="utf-8"), "sessions")
+
+
+@pytest.mark.parametrize("tool", ["search", "fetch"])
+@pytest.mark.parametrize("status", [200, 500])
+def test_research_scope_persists_no_credential_from_child_cwd(
+    tmp_path: Path, home_dir: Path, monkeypatch: pytest.MonkeyPatch, tool: str, status: int
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owned = _opt_in(project)
+    child = _keyed_child(project)
+    home = home_dir
+    payload = _SEARCH_PAYLOAD if tool == "search" else {"title": "Example", "content": "content"}
+    reply = HttpReply(status, payload if status == 200 else None)
+    monkeypatch.setattr("deepsearch_axi.transport.post_tool", lambda *args, **kwargs: reply)
+    args = ["search", "scope probe"] if tool == "search" else ["fetch", "https://example.com/"]
+    code = main(
+        args,
+        env={"DEEPSEEK_API_KEY": FAKE_KEY},
+        cwd=child,
+        home=home,
+    )
+    assert code == (0 if status == 200 else 1)
+    _assert_scope_is_opaque((owned / "state.json").read_text(encoding="utf-8"), "scopes")

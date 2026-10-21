@@ -56,36 +56,53 @@ def main(
     code = EXIT_OK
     cwd_path: Path | None = None
     attempts: list[Tool] = []
+    attempt_secrets: list[str] = []
     succeeded = False
 
     try:
         cwd_path = _resolve_cwd(cwd)
         command = parse_args(arguments)
         if isinstance(command, HomeCommand):
-            context = local_home.gather_local_context(environment, cwd_path, home_path)
-            document = documents.home_document(context)
-            # LocalContext deliberately carries no credential, but the home
-            # document echoes cwd/bin/origin values that may reflect the
-            # effective key (for example inside a hostname). Hand the resolved
-            # value only to the output boundary.
+            # The home view echoes cwd/bin/origin values that may reflect the
+            # effective key (for example inside a directory or hostname). Hand
+            # the resolved value only to the output boundary and to the state
+            # scope lookup, which stores it only as an opaque identifier.
             secrets = _redaction_secrets(environment, cwd_path, home_path)
+            context = local_home.gather_local_context(
+                environment, cwd_path, home_path, secrets=secrets
+            )
+            document = documents.home_document(context)
         elif isinstance(command, HelpCommand):
             document = documents.help_document(command.path)
         elif isinstance(command, SearchCommand):
-            document, secrets = _search(command, environment, cwd_path, home_path, attempts)
+            document, secrets = _search(
+                command, environment, cwd_path, home_path, attempts, attempt_secrets
+            )
             succeeded = True
         elif isinstance(command, FetchCommand):
-            document, secrets = _fetch(command, environment, cwd_path, home_path, attempts)
+            document, secrets = _fetch(
+                command, environment, cwd_path, home_path, attempts, attempt_secrets
+            )
             succeeded = True
         elif isinstance(command, SetupCommand):
             document = _setup(command, environment, cwd_path, home_path)
         elif isinstance(command, SessionCommand):
             payload = session.read_native_payload(_stdin(stdin))
             session_secrets: list[str] = []
+            secret_cache: dict[Path, tuple[str, ...]] = {}
+
+            def secrets_for(path: Path) -> tuple[str, ...]:
+                cached = secret_cache.get(path)
+                if cached is None:
+                    cached = _redaction_secrets(environment, path, home_path)
+                    secret_cache[path] = cached
+                    session_secrets.extend(cached)
+                return cached
 
             def context_for(path: Path) -> LocalContext:
-                session_secrets.extend(_redaction_secrets(environment, path, home_path))
-                return local_home.gather_local_context(environment, path, home_path)
+                return local_home.gather_local_context(
+                    environment, path, home_path, secrets=secrets_for(path)
+                )
 
             result = session.handle_session(
                 command.event,
@@ -93,9 +110,10 @@ def main(
                 command.project,
                 payload,
                 context_for=context_for,
+                secrets_for=secrets_for,
             )
             document = result.document
-            secrets = tuple(session_secrets)
+            secrets = tuple(dict.fromkeys(session_secrets))
         else:  # pragma: no cover - parse_args only returns the frozen union
             raise DeepsearchError(internal_error())
     except DeepsearchError as error:
@@ -107,7 +125,13 @@ def main(
     finally:
         # Search/fetch failures still count once a request was attempted.
         if attempts and cwd_path is not None:
-            _record_research(cwd_path, home_path, attempts[0], succeeded)
+            _record_research(
+                cwd_path,
+                home_path,
+                attempts[0],
+                succeeded,
+                tuple(attempt_secrets),
+            )
 
     if document is not None:
         _write(document, secrets)
@@ -148,10 +172,12 @@ def _search(
     cwd: Path,
     home: Path,
     attempts: list[Tool],
+    used_secrets: list[str],
 ) -> tuple[JsonObject, tuple[str, ...]]:
     origin = validate_base_url(env.get("DEEPSEEK_BASE_URL"))
     credential = resolve_credential(env, cwd, home)
     secrets = (credential.value,)
+    used_secrets.append(credential.value)
     # From here a request is attempted, so the finally block must count either
     # outcome even when post_tool or response validation raises.
     attempts.append("search")
@@ -180,10 +206,12 @@ def _fetch(
     cwd: Path,
     home: Path,
     attempts: list[Tool],
+    used_secrets: list[str],
 ) -> tuple[JsonObject, tuple[str, ...]]:
     origin = validate_base_url(env.get("DEEPSEEK_BASE_URL"))
     credential = resolve_credential(env, cwd, home)
     secrets = (credential.value,)
+    used_secrets.append(credential.value)
     # See _search: failures past this point are attempted research calls.
     attempts.append("fetch")
     reply = transport.post_tool(
@@ -217,9 +245,9 @@ def _setup(
     return documents.setup_document(result, documents.collapse_home(str(result.root), str(home)))
 
 
-def _record_research(cwd: Path, home: Path, tool: Tool, ok: bool) -> None:
+def _record_research(cwd: Path, home: Path, tool: Tool, ok: bool, secrets: tuple[str, ...]) -> None:
     try:
-        state_root = state.find_state_root(cwd, home)
+        state_root = state.find_state_root(cwd, home, secrets=secrets)
         if state_root is not None:
             state.record_research(state_root.root, state_root.scope, tool, ok)
     except (DeepsearchError, OSError):

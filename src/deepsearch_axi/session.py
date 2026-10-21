@@ -27,6 +27,7 @@ from deepsearch_axi.models import (
     SessionResult,
 )
 from deepsearch_axi.state import (
+    opaque_scope,
     read_view,
     record_session_event,
     scope_for,
@@ -127,15 +128,21 @@ def handle_session(
     native_payload: JsonObject,
     *,
     context_for: Callable[[Path], LocalContext],
+    secrets_for: Callable[[Path], tuple[str, ...]] | None = None,
 ) -> SessionResult:
     """Record a native event and build its document without host I/O.
 
     ``context_for`` is injected so this module never imports auth, network or
-    installer code; ``deepsearch_axi.documents`` is imported lazily because the
-    document builders live in a sibling component.
+    installer code; ``secrets_for`` is injected for the same reason and is
+    consulted *before* any state write so a credential reflected by the native
+    cwd can never be persisted as a scope. ``deepsearch_axi.documents`` is
+    imported lazily because the document builders live in a sibling component.
     """
     native = normalize_event(event, agent, root, native_payload)
     root_path = Path(root).resolve()
+    cwd = Path(native_payload["cwd"]).resolve()
+    if secrets_for is not None:
+        native = replace(native, scope=opaque_scope(native.scope, secrets_for(cwd)))
     recorded = False
     try:
         manifest = load_manifest(root_path)
@@ -147,7 +154,6 @@ def handle_session(
     from deepsearch_axi import documents
 
     if event == "start":
-        cwd = Path(native_payload["cwd"]).resolve()
         context = context_for(cwd)
         prior, activity = read_view(root_path, native.scope, exclude_session=native.session_hash)
         context = replace(context, prior=prior, activity=activity)

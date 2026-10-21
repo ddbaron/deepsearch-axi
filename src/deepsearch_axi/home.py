@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from deepsearch_axi.auth import probe_credential
@@ -78,6 +78,8 @@ def gather_local_context(
     cwd: Path,
     home: Path,
     argv0: str | None = None,
+    *,
+    secrets: Sequence[str] = (),
 ) -> LocalContext:
     """Build the live, offline readiness context for ``cwd`` and ``home``."""
     cwd_path = Path(cwd)
@@ -100,7 +102,7 @@ def gather_local_context(
         origin = "invalid"
         origin_state = "invalid"
 
-    state_root = find_state_root(cwd_path, home_path)
+    state_root = find_state_root(cwd_path, home_path, secrets=secrets)
     integrations = _manifest_states(state_root.root if state_root is not None else None, executable)
     prior = None
     activity = None

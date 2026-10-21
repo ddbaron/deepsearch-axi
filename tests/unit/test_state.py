@@ -22,6 +22,7 @@ from deepsearch_axi.state import (
     LOCK_RELATIVE,
     STATE_RELATIVE,
     find_state_root,
+    opaque_scope,
     read_view,
     record_research,
     record_session_event,
@@ -105,6 +106,40 @@ def test_scope_for_hashes_very_long_relative_paths(tmp_path: Path) -> None:
     assert scope.startswith("h:")
     assert len(scope) == 34
     assert all(character in "0123456789abcdef" for character in scope[2:])
+
+
+def test_opaque_scope_hides_secrets_collision_safely(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    key = "sk-test-FAKEKEY-1234567890"
+    assert opaque_scope("a/b", (key,)) == "a/b"
+
+    hidden = opaque_scope(f"{key}/src", (key,))
+    assert hidden.startswith("o:")
+    assert len(hidden) == 34
+    assert key not in hidden
+    assert hidden == opaque_scope(f"{key}/src", (key,))
+    assert hidden != opaque_scope(f"{key}/other", (key,))
+
+    literal = root / hidden
+    literal.mkdir()
+    assert scope_for(root, literal) != hidden
+
+
+def test_find_state_root_maps_secret_bearing_scopes_consistently(project: Path) -> None:
+    key = "sk-test-FAKEKEY-abcdef"
+    child = project / key
+    child.mkdir()
+    found = find_state_root(child, project.parent, secrets=(key,))
+    assert found is not None
+    assert found.scope.startswith("o:")
+    assert key not in found.scope
+
+    record_research(found.root, found.scope, "search", True)
+    assert key not in _state_path(project).read_text(encoding="utf-8")
+    _, activity = read_view(found.root, found.scope)
+    assert activity is not None
+    assert activity.search_ok == 1
 
 
 def test_scope_for_keeps_literal_h_prefixed_paths_out_of_the_hashed_namespace(
