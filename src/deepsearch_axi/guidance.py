@@ -136,7 +136,8 @@ _COMMANDS: Tuple[CommandSpec, ...] = (
         summary=(
             "Install or repair Claude Code, Codex, and OpenCode session integrations "
             "with one shared project record; a moved project directory is refused "
-            "until that record is removed."
+            "until that record is removed. After moving the executable, run full setup; "
+            "--agent repairs only its selected host and can leave other hosts stale."
         ),
         usage="deepsearch-axi setup [flags]",
         arguments=(),

@@ -73,7 +73,7 @@ Examples:
 
 ### deepsearch-axi setup
 
-Install or repair Claude Code, Codex, and OpenCode session integrations with one shared project record; a moved project directory is refused until that record is removed.
+Install or repair Claude Code, Codex, and OpenCode session integrations with one shared project record; a moved project directory is refused until that record is removed. After moving the executable, run full setup; --agent repairs only its selected host and can leave other hosts stale.
 
 ```text
 deepsearch-axi setup [flags]

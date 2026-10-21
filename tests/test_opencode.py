@@ -110,6 +110,32 @@ if (mode === "v2" || mode === "v2-null") {
   result.checkpoint = checkpoint.event;
   await server.dispose();
   result.cleaned = true;
+} else if (mode === "v1-fallback" || mode === "v2-fallback") {
+  const system = [];
+  let cleanup;
+  if (mode === "v1-fallback") {
+    const server = await plugin.server({ directory: child });
+    await server["experimental.chat.system.transform"](
+      { sessionID: "node-fallback" }, { system },
+    );
+    cleanup = server.dispose;
+  } else {
+    let handler;
+    cleanup = await plugin.setup({
+      location: { directory: child },
+      session: { hook: async (_, callback) => { handler = callback; } },
+      event: { subscribe: async function* ({ signal }) {
+        while (!signal.aborted) await sleep(10);
+      } },
+    });
+    await handler({ sessionID: "node-fallback", system });
+  }
+  result.system = system;
+  await cleanup();
+  const records = JSON.parse(readFileSync(statePath, "utf8")).sessions;
+  result.checkpoint = records[0].event;
+  result.scope = records[0].scope;
+  result.cleaned = true;
 } else if (mode === "v1-native") {
   // Real V1 envelopes: session metadata lives under `properties.info`.
   const server = await plugin.server();
@@ -423,6 +449,24 @@ def test_generated_plugin_v1_real_envelopes_use_native_child_directory(
     assert result["id"] == "deepsearch-axi"
     assert result["injected"] == 1
     _assert_child_capture(result, project_dir, child, "node-v1-native", cwd_log)
+
+
+@pytest.mark.parametrize("mode", ["v1-fallback", "v2-fallback"])
+def test_native_instance_child_directory_survives_cleanup(
+    tmp_path: Path, home_dir: Path, project_dir: Path, mode: str
+) -> None:
+    executable = _fake_console(home_dir)
+    cwd_log = tmp_path / "cwd.log"
+    environment = _environment(home_dir, cwd_log)
+    plugin = _generate(executable, environment, project_dir)
+    harness = tmp_path / "harness.mjs"
+    harness.write_text(_HARNESS, encoding="utf-8")
+    child = _native_child(project_dir)
+    cwd_log.unlink()
+
+    result = _run_plugin(mode, plugin, project_dir, environment, harness, child)
+
+    _assert_child_capture(result, project_dir, child, "node-fallback", cwd_log)
 
 
 def test_generated_plugin_v2_real_envelopes_use_native_child_directory(

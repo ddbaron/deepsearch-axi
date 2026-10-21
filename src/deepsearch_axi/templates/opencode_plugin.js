@@ -294,7 +294,7 @@ function createAdapter(options) {
     for (const id of started) {
       if (!ended.has(id)) {
         ended.add(id);
-        pending.push(run("end", id, "plugin.dispose", directories.get(id) || PROJECT));
+        pending.push(run("end", id, "plugin.dispose", await directoryFor(id)));
       }
     }
     await Promise.all(pending);
