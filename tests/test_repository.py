@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
-from deepsearch_axi import guidance
+import pytest
+import toon_format
+
+from deepsearch_axi import argv, documents, guidance, models
+from deepsearch_axi.origin import validate_base_url
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -52,6 +57,37 @@ def _section(heading: str) -> str:
     rest = README[start:]
     end = rest.find("\n## ")
     return rest if end == -1 else rest[:end]
+
+
+def _code_block(section: str, language: str) -> str:
+    blocks = re.findall(rf"```{language}\n(.*?)```", section, re.DOTALL)
+    assert len(blocks) == 1, f"expected exactly one {language} block"
+    return blocks[0].rstrip("\n")
+
+
+def _worked_example() -> dict[str, object]:
+    literal = _code_block(_section("## Worked example"), "text")
+    decoded = toon_format.decode(literal, strict=True)
+    assert isinstance(decoded, dict)
+    return decoded
+
+
+def _hint_command(hint: str, *, query: str, url: str) -> object:
+    """Parse a contextual hint after substituting its documented placeholders."""
+    tokens = shlex.split(hint)
+    assert tokens[0] == "deepsearch-axi"
+    substituted = [
+        token.replace("<query>", query).replace("<url>", url).replace("<domain>", "docs.python.org")
+        for token in tokens[1:]
+    ]
+    return argv.parse_args(substituted)
+
+
+def _origin_values(cases: list[object]) -> set[object]:
+    values: set[object] = set()
+    for case in cases:
+        values.add(case.values[0])  # type: ignore[attr-defined]
+    return values
 
 
 def _flag_rows() -> dict[tuple[str, str], str]:
@@ -198,16 +234,169 @@ def test_readme_documents_schemas_session_protocol_and_agent_setup() -> None:
     assert "python scripts/generate_skill.py --check" in integration
 
 
+def test_readme_worked_example_is_strict_toon_with_projected_result() -> None:
+    decoded = _worked_example()
+    query = 'site:docs.python.org "TaskGroup" after:2024-01-01'
+
+    assert decoded["query"] == query
+    assert decoded["count"] == 1
+    assert isinstance(decoded["count"], int) and not isinstance(decoded["count"], bool)
+    assert decoded["total"] == 1
+    assert decoded["total_scope"] == "response"
+
+    results = decoded["results"]
+    assert isinstance(results, list) and len(results) == 1
+    row = results[0]
+    assert list(row) == ["title", "url", "summary", "date", "authority"]
+    assert row["title"] == "asyncio TaskGroup"
+    assert row["url"] == "https://docs.python.org/3/library/asyncio-task.html"
+    assert isinstance(row["summary"], str)
+    assert row["date"] is None
+    assert row["authority"] == 4
+    assert isinstance(row["authority"], int) and not isinstance(row["authority"], bool)
+    assert decoded["count"] == decoded["total"] == len(results)
+
+    expected = documents.search_document(
+        query,
+        [dict(row)],
+        models.OutputOptions(fields=tuple(row)),
+        request=models.SearchOptions(query=query, count=5),
+    )
+    assert decoded == expected
+    literal = _code_block(_section("## Worked example"), "text")
+    assert toon_format.encode(expected, indent_size=2, delimiter=",") == literal
+
+
+def test_readme_worked_example_hints_follow_the_supported_grammar() -> None:
+    decoded = _worked_example()
+    rows = decoded["results"]
+    assert isinstance(rows, list) and len(rows) == 1
+    url = rows[0]["url"]
+    query = 'site:docs.python.org "TaskGroup" after:2024-01-01'
+
+    hints = decoded["help"]
+    assert isinstance(hints, list) and len(hints) == 2
+    fetch, search = hints
+    assert fetch == guidance.HINT_FETCH
+
+    fetch_command = _hint_command(fetch, query=query, url=url)
+    assert isinstance(fetch_command, argv.FetchCommand)
+    assert fetch_command.url == url
+    assert fetch_command.full is False
+
+    search_command = _hint_command(search, query=query, url=url)
+    assert isinstance(search_command, argv.SearchCommand)
+    assert search_command.options.query == f"{query} site:docs.python.org"
+    assert search_command.options.count == 5
+    assert search_command.output.fields == tuple(rows[0])
+
+
+def test_readme_content_defaults_and_projection_precedence_match_parser() -> None:
+    search = _section("### `deepsearch-axi search <query>`")
+    projection = _section("### Counts, projection, and content")
+    canonical = (
+        "`--need-content` alone adds a fourth `content` column.",
+        "An explicit `--fields` projection replaces the defaults and preserves the requested "
+        "order, so a projection wins over `--need-content`.",
+    )
+    for section in (search, projection):
+        for sentence in canonical:
+            assert sentence in section
+    assert "`--count` accepts 1-50 and defaults to 10." in search
+    assert "does not change the default projection" not in README
+
+    default = argv.parse_args(["search", "q"])
+    assert isinstance(default, argv.SearchCommand)
+    assert default.options.count == models.SEARCH_DEFAULT_COUNT == 10
+    assert default.output.fields == models.DEFAULT_FIELDS == ("title", "url", "snippet")
+
+    opted_in = argv.parse_args(["search", "q", "--need-content"])
+    assert isinstance(opted_in, argv.SearchCommand)
+    assert (
+        opted_in.output.fields
+        == models.DEFAULT_FIELDS_WITH_CONTENT
+        == (
+            "title",
+            "url",
+            "snippet",
+            "content",
+        )
+    )
+
+    explicit = argv.parse_args(
+        ["search", "q", "--need-content", "--fields", "summary,date,authority"]
+    )
+    assert isinstance(explicit, argv.SearchCommand)
+    assert explicit.options.need_content is True
+    assert explicit.output.fields == ("summary", "date", "authority")
+
+    document = documents.search_document(
+        "q",
+        [
+            {
+                "title": "t",
+                "url": "u",
+                "snippet": "s",
+                "content": "c",
+                "summary": "m",
+                "date": None,
+                "authority": 4,
+            }
+        ],
+        models.OutputOptions(fields=explicit.output.fields),
+        request=explicit.options,
+    )
+    row = document["results"][0]
+    assert list(row) == ["summary", "date", "authority"]
+
+
+def test_readme_origin_policy_matches_validator_and_origin_fixtures() -> None:
+    section = _section("### API origin")
+    assert "trusted custom hostname" in section
+    assert "trusted endpoint" in section
+    assert "credential recipient" in section
+    assert "certificate verification" in section
+    assert "HTTP is permitted only for numeric loopback" in section
+    assert "`localhost` and nonnumeric hostnames are rejected for HTTP" in section
+    assert "non-numeric hostnames are rejected before any credential-bearing request" not in section
+
+    # Imported here so the documented policy is checked against the same cases
+    # that exercise the validator in tests/unit/test_origin.py.
+    from unit.test_origin import _ACCEPT, _REJECT
+
+    accepted = _origin_values(_ACCEPT)
+    rejected = _origin_values(_REJECT)
+    documented = re.findall(r"`(https?://[^`\s]+)`", section)
+    assert documented
+    for value, expected in (
+        ("https://api.deepseek.com", models.OFFICIAL_ORIGIN),
+        ("https://example.com", "https://example.com"),
+        ("https://sub.example.com:443/", "https://sub.example.com:443"),
+        ("http://127.0.0.1:8123", "http://127.0.0.1:8123"),
+        ("http://[::1]:8123", "http://[::1]:8123"),
+    ):
+        assert value in accepted
+        assert validate_base_url(value) == expected
+    for value in documented:
+        assert validate_base_url(value) == value.rstrip("/")
+
+    for value in ("http://example.com", "http://localhost:8123"):
+        assert value in rejected
+        with pytest.raises(models.DeepsearchError):
+            validate_base_url(value)
+
+
 def test_readme_has_copyable_project_instruction_and_worked_example() -> None:
     assert guidance.PROJECT_INSTRUCTION in README
     example = _section("## Worked example")
     assert "illustrative" in example.lower()
     assert "not a live call" in example
     assert "--fields title,url,summary,date,authority" in example
-    assert "authority: 4" in example
     assert "truncated" in example
     assert "--full" in example
     assert "<url>" in example
+    assert "selects the returned URL" in example
+    assert "only if" in example
 
 
 def test_readme_lists_all_ten_axi_principles() -> None:
