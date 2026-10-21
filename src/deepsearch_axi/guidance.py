@@ -133,7 +133,11 @@ _COMMANDS: Tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         path=("setup",),
-        summary="Install or repair Claude Code, Codex, and OpenCode session integrations.",
+        summary=(
+            "Install or repair Claude Code, Codex, and OpenCode session integrations "
+            "with one shared project record; a moved project directory is refused "
+            "until that record is removed."
+        ),
         usage="deepsearch-axi setup [flags]",
         arguments=(),
         flags=(
@@ -152,7 +156,10 @@ _COMMANDS: Tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         path=("session",),
-        summary="Record a native session lifecycle event from host hook JSON on stdin.",
+        summary=(
+            "Record a native session lifecycle event from host hook JSON on stdin; "
+            "the native payload cwd selects the ambient-context and state scope."
+        ),
         usage="deepsearch-axi session <start|end> --agent NAME --project ABS_DIR",
         arguments=(),
         flags=(),
@@ -166,7 +173,8 @@ _COMMANDS: Tuple[CommandSpec, ...] = (
         path=("session", "start"),
         summary=(
             "Record a session start and print compact ambient context from native hook JSON "
-            "on stdin (max 64 KiB)."
+            "on stdin (max 64 KiB); the native payload cwd selects the ambient-context "
+            "and state scope."
         ),
         usage="deepsearch-axi session start --agent NAME --project ABS_DIR",
         arguments=(),
@@ -178,7 +186,12 @@ _COMMANDS: Tuple[CommandSpec, ...] = (
                 "host integration reporting the event",
                 _AGENT_CHOICES,
             ),
-            FlagSpec("--project", "ABS_DIR", "required", "absolute project directory"),
+            FlagSpec(
+                "--project",
+                "ABS_DIR",
+                "required",
+                "absolute project directory that must contain the payload cwd",
+            ),
         ),
         examples=(
             'deepsearch-axi session start --agent claude-code --project "$PWD" < event.json',
@@ -187,7 +200,10 @@ _COMMANDS: Tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         path=("session", "end"),
-        summary=("Record a session checkpoint or end from native hook JSON on stdin (max 64 KiB)."),
+        summary=(
+            "Record a session checkpoint or end from native hook JSON on stdin "
+            "(max 64 KiB); session.idle and plugin.dispose payloads record a checkpoint."
+        ),
         usage="deepsearch-axi session end --agent NAME --project ABS_DIR",
         arguments=(),
         flags=(
@@ -198,7 +214,12 @@ _COMMANDS: Tuple[CommandSpec, ...] = (
                 "host integration reporting the event",
                 _AGENT_CHOICES,
             ),
-            FlagSpec("--project", "ABS_DIR", "required", "absolute project directory"),
+            FlagSpec(
+                "--project",
+                "ABS_DIR",
+                "required",
+                "absolute project directory that must contain the payload cwd",
+            ),
         ),
         examples=(
             'deepsearch-axi session end --agent claude-code --project "$PWD" < event.json',

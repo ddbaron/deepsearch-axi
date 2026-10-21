@@ -10,17 +10,34 @@ const TIMEOUT_MS = 10000;
 const MAX_OUTPUT = 65536;
 const UNKNOWN_SESSION = "opencode-unknown";
 
+// OpenCode V1 events carry their native payload under `properties`; V2 events
+// carry it under `data`. Read either shape and never the event's own envelope
+// fields (`id`, `created`, `durable`, ...).
+function eventSource(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if (value.properties && typeof value.properties === "object") {
+    return value.properties;
+  }
+  if (value.data && typeof value.data === "object") {
+    return value.data;
+  }
+  return null;
+}
+
 function sessionIdOf(value) {
   if (!value || typeof value !== "object") {
     return null;
   }
   const candidates = [];
-  const properties = value.properties;
-  if (properties && typeof properties === "object") {
-    if (properties.info && typeof properties.info === "object") {
-      candidates.push(properties.info.id);
+  const source = eventSource(value);
+  if (source) {
+    if (source.info && typeof source.info === "object") {
+      candidates.push(source.info.id);
+      candidates.push(source.info.sessionID);
     }
-    candidates.push(properties.sessionID);
+    candidates.push(source.sessionID);
   }
   candidates.push(value.sessionID);
   for (const candidate of candidates) {
@@ -31,13 +48,106 @@ function sessionIdOf(value) {
   return null;
 }
 
-function createAdapter() {
+function sessionDirectory(info) {
+  if (!info || typeof info !== "object") {
+    return null;
+  }
+  if (info.location && typeof info.location === "object") {
+    const directory = info.location.directory;
+    if (typeof directory === "string" && directory.length > 0) {
+      return directory;
+    }
+  }
+  if (typeof info.directory === "string" && info.directory.length > 0) {
+    return info.directory;
+  }
+  if (info.path && typeof info.path === "object") {
+    const cwd = info.path.cwd;
+    if (typeof cwd === "string" && cwd.length > 0) {
+      return cwd;
+    }
+  }
+  if (info.data && typeof info.data === "object") {
+    return sessionDirectory(info.data);
+  }
+  return null;
+}
+
+// Read the native session directory: V1 exposes it on
+// `properties.info.directory`; V2 exposes it on `data.location.directory` or
+// the event envelope's `location.directory`.
+function directoryOf(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const source = eventSource(value);
+  if (source) {
+    const info = sessionDirectory(source.info);
+    if (info) {
+      return info;
+    }
+    const direct = sessionDirectory(source);
+    if (direct) {
+      return direct;
+    }
+  }
+  return sessionDirectory(value);
+}
+
+function isIdleEvent(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  if (value.type === "session.idle") {
+    return true;
+  }
+  if (value.type !== "session.status") {
+    return false;
+  }
+  const source = eventSource(value);
+  const status = source && source.status;
+  return !!status && typeof status === "object" && status.type === "idle";
+}
+
+function createAdapter(options) {
+  const settings = options || {};
   const children = new Set();
   const contexts = new Map();
+  const directories = new Map();
   const started = new Set();
   const ended = new Set();
 
-  function run(event, sessionID, hookEventName) {
+  async function directoryFor(sessionID, nativeDirectory) {
+    if (typeof nativeDirectory === "string" && nativeDirectory.length > 0) {
+      if (sessionID) {
+        directories.set(sessionID, nativeDirectory);
+      }
+      return nativeDirectory;
+    }
+    if (sessionID && directories.has(sessionID)) {
+      return directories.get(sessionID);
+    }
+    if (sessionID && typeof settings.resolveDirectory === "function") {
+      try {
+        const resolved = await settings.resolveDirectory(sessionID);
+        if (typeof resolved === "string" && resolved.length > 0) {
+          directories.set(sessionID, resolved);
+          return resolved;
+        }
+      } catch {
+        /* the host lookup is optional */
+      }
+    }
+    if (
+      typeof settings.fallbackDirectory === "string" &&
+      settings.fallbackDirectory.length > 0
+    ) {
+      return settings.fallbackDirectory;
+    }
+    return PROJECT;
+  }
+
+  function run(event, sessionID, hookEventName, directory) {
     return new Promise((resolve) => {
       let settled = false;
       let child = null;
@@ -60,7 +170,7 @@ function createAdapter() {
         child = spawn(
           COMMAND[0],
           [...COMMAND.slice(1), "session", event, "--agent", AGENT, "--project", PROJECT],
-          { cwd: PROJECT, stdio: ["pipe", "pipe", "ignore"], shell: false },
+          { cwd: directory, stdio: ["pipe", "pipe", "ignore"], shell: false },
         );
       } catch {
         resolve(null);
@@ -107,27 +217,34 @@ function createAdapter() {
       child.stdin.end(
         JSON.stringify({
           session_id: sessionID,
-          cwd: PROJECT,
+          cwd: directory,
           hook_event_name: hookEventName,
         }),
       );
     });
   }
 
-  function ensureContext(sessionID) {
+  function ensureContext(sessionID, nativeDirectory) {
     const id = sessionID || UNKNOWN_SESSION;
     started.add(id);
     if (!contexts.has(id)) {
-      contexts.set(id, run("start", id, "session.created"));
+      // Store the promise before awaiting so concurrent hooks share one start.
+      contexts.set(
+        id,
+        (async () => {
+          const directory = await directoryFor(sessionID, nativeDirectory);
+          return run("start", id, "session.created", directory);
+        })(),
+      );
     }
     return contexts.get(id);
   }
 
-  async function inject(system, sessionID, wrap) {
+  async function inject(system, sessionID, wrap, nativeDirectory) {
     if (!Array.isArray(system)) {
       return;
     }
-    const text = await ensureContext(sessionID);
+    const text = await ensureContext(sessionID, nativeDirectory);
     if (typeof text !== "string" || text.length === 0) {
       return;
     }
@@ -144,24 +261,28 @@ function createAdapter() {
     if (!event || typeof event !== "object") {
       return;
     }
+    const id = sessionIdOf(event);
+    const nativeDirectory = directoryOf(event);
+    if (id && nativeDirectory) {
+      directories.set(id, nativeDirectory);
+    }
     if (event.type === "session.created") {
-      const id = sessionIdOf(event);
       if (id) {
-        await ensureContext(id);
+        await ensureContext(id, nativeDirectory);
       }
       return;
     }
-    if (event.type === "session.idle") {
-      const id = sessionIdOf(event);
+    if (isIdleEvent(event)) {
       if (id) {
-        await run("end", id, "session.idle");
+        const directory = await directoryFor(id, nativeDirectory);
+        await run("end", id, "session.idle", directory);
       }
       return;
     }
     if (event.type === "session.deleted") {
-      const id = sessionIdOf(event);
       if (id) {
-        await run("end", id, "session.deleted");
+        const directory = await directoryFor(id, nativeDirectory);
+        await run("end", id, "session.deleted", directory);
         ended.add(id);
         contexts.delete(id);
       }
@@ -173,7 +294,7 @@ function createAdapter() {
     for (const id of started) {
       if (!ended.has(id)) {
         ended.add(id);
-        pending.push(run("end", id, "plugin.dispose"));
+        pending.push(run("end", id, "plugin.dispose", directories.get(id) || PROJECT));
       }
     }
     await Promise.all(pending);
@@ -194,9 +315,26 @@ function createAdapter() {
 export default {
   id: "deepsearch-axi",
   async setup(ctx) {
-    const adapter = createAdapter();
+    const adapter = createAdapter({
+      fallbackDirectory: ctx && ctx.location && ctx.location.directory,
+      resolveDirectory: async (sessionID) => {
+        if (!sessionID || !ctx || !ctx.session || typeof ctx.session.get !== "function") {
+          return null;
+        }
+        try {
+          return sessionDirectory(await ctx.session.get({ sessionID }));
+        } catch {
+          return null;
+        }
+      },
+    });
     await ctx.session.hook("context", (event) =>
-      adapter.inject(event.system, event.sessionID, (text) => ({ type: "text", text })),
+      adapter.inject(
+        event.system,
+        event.sessionID,
+        (text) => ({ type: "text", text }),
+        directoryOf(event),
+      ),
     );
     const controller = new AbortController();
     const pump = (async () => {
@@ -214,11 +352,35 @@ export default {
       await adapter.dispose();
     };
   },
-  async server() {
-    const adapter = createAdapter();
+  async server(input) {
+    const adapter = createAdapter({
+      fallbackDirectory: input && input.directory,
+      resolveDirectory: async (sessionID) => {
+        const client = input && input.client;
+        if (
+          !sessionID ||
+          !client ||
+          !client.session ||
+          typeof client.session.get !== "function"
+        ) {
+          return null;
+        }
+        try {
+          const response = await client.session.get({ path: { id: sessionID } });
+          return sessionDirectory(response && response.data ? response.data : response);
+        } catch {
+          return null;
+        }
+      },
+    });
     return {
-      "experimental.chat.system.transform": async (input, output) =>
-        adapter.inject(output.system, input && input.sessionID, (text) => text),
+      "experimental.chat.system.transform": async (transformInput, output) =>
+        adapter.inject(
+          output.system,
+          transformInput && transformInput.sessionID,
+          (text) => text,
+          directoryOf(transformInput),
+        ),
       event: async ({ event }) => adapter.onEvent(event),
       dispose: async () => adapter.dispose(),
     };

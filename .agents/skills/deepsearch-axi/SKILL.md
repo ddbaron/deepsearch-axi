@@ -73,7 +73,7 @@ Examples:
 
 ### deepsearch-axi setup
 
-Install or repair Claude Code, Codex, and OpenCode session integrations.
+Install or repair Claude Code, Codex, and OpenCode session integrations with one shared project record; a moved project directory is refused until that record is removed.
 
 ```text
 deepsearch-axi setup [flags]
@@ -91,7 +91,7 @@ Examples:
 
 ### deepsearch-axi session
 
-Record a native session lifecycle event from host hook JSON on stdin.
+Record a native session lifecycle event from host hook JSON on stdin; the native payload cwd selects the ambient-context and state scope.
 
 ```text
 deepsearch-axi session <start|end> --agent NAME --project ABS_DIR
@@ -110,7 +110,7 @@ Examples:
 
 ### deepsearch-axi session start
 
-Record a session start and print compact ambient context from native hook JSON on stdin (max 64 KiB).
+Record a session start and print compact ambient context from native hook JSON on stdin (max 64 KiB); the native payload cwd selects the ambient-context and state scope.
 
 ```text
 deepsearch-axi session start --agent NAME --project ABS_DIR
@@ -119,7 +119,7 @@ deepsearch-axi session start --agent NAME --project ABS_DIR
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--agent NAME` | `required` | host integration reporting the event |
-| `--project ABS_DIR` | `required` | absolute project directory |
+| `--project ABS_DIR` | `required` | absolute project directory that must contain the payload cwd |
 | `--help` | `false` | show help and exit |
 
 Examples:
@@ -129,7 +129,7 @@ Examples:
 
 ### deepsearch-axi session end
 
-Record a session checkpoint or end from native hook JSON on stdin (max 64 KiB).
+Record a session checkpoint or end from native hook JSON on stdin (max 64 KiB); session.idle and plugin.dispose payloads record a checkpoint.
 
 ```text
 deepsearch-axi session end --agent NAME --project ABS_DIR
@@ -138,7 +138,7 @@ deepsearch-axi session end --agent NAME --project ABS_DIR
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--agent NAME` | `required` | host integration reporting the event |
-| `--project ABS_DIR` | `required` | absolute project directory |
+| `--project ABS_DIR` | `required` | absolute project directory that must contain the payload cwd |
 | `--help` | `false` | show help and exit |
 
 Examples:

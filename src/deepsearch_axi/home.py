@@ -148,6 +148,7 @@ class _HookHandler(NamedTuple):
     kind: object
     command: str
     matcher: object
+    keys: tuple[str, ...]
 
 
 def _hook_handlers(document: dict) -> dict[str, list[_HookHandler]] | None:
@@ -173,7 +174,8 @@ def _hook_handlers(document: dict) -> dict[str, list[_HookHandler]] | None:
                     continue
                 command = handler.get("command")
                 if isinstance(command, str):
-                    found.append(_HookHandler(handler.get("type"), command, matcher))
+                    keys = tuple(sorted(handler))
+                    found.append(_HookHandler(handler.get("type"), command, matcher, keys))
         handlers[event] = found
     return handlers
 
@@ -284,7 +286,12 @@ def _hooks_intact(
         if len(owned) != 1:
             return False
         handler = owned[0]
+        # Setup treats an owned registration as canonical only when it is exactly
+        # a command handler carrying the desired command. Readiness must agree:
+        # an extra field such as ``timeout`` or a missing ``type`` is stale.
         if handler.kind != "command" or handler.command != expected[event]:
+            return False
+        if handler.keys != ("command", "type"):
             return False
         if not _matcher_covers(handler.matcher, event, agent):
             return False

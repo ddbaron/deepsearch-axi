@@ -29,7 +29,7 @@ _HARNESS = r"""
 import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const [mode, pluginPath, project] = process.argv.slice(2);
+const [mode, pluginPath, project, child] = process.argv.slice(2);
 const plugin = (await import(pathToFileURL(pluginPath).href)).default;
 const result = { id: plugin.id, mode };
 const statePath = `${project}/.deepsearch-axi/state.json`;
@@ -110,6 +110,99 @@ if (mode === "v2" || mode === "v2-null") {
   result.checkpoint = checkpoint.event;
   await server.dispose();
   result.cleaned = true;
+} else if (mode === "v1-native") {
+  // Real V1 envelopes: session metadata lives under `properties.info`.
+  const server = await plugin.server();
+  const sessionID = "node-v1-native";
+  await server.event({
+    event: {
+      type: "session.created",
+      properties: {
+        info: {
+          id: sessionID,
+          projectID: "prj_node_test",
+          directory: child,
+          title: "native child",
+          version: "1.18.29",
+          time: { created: 1, updated: 1 },
+        },
+      },
+    },
+  });
+  const system = [];
+  await server["experimental.chat.system.transform"]({ sessionID }, { system });
+  result.injected = system.length;
+  result.system = system;
+  await waitForEvent((record) => record.event === "start");
+  await server.event({
+    event: { type: "session.idle", properties: { sessionID } },
+  });
+  const checkpoint = await waitForEvent((record) => record.event === "checkpoint");
+  result.checkpoint = checkpoint.event;
+  result.scope = checkpoint.scope;
+  await server.dispose();
+  result.cleaned = true;
+} else if (mode === "v2-native") {
+  // Real V2 envelopes: events carry their payload under `data`, and the
+  // session directory arrives on `data.location.directory`. The context hook
+  // can run before the subscription observes session.created, so the host's
+  // session lookup supplies the child directory.
+  let contextHandler = null;
+  const queue = [];
+  async function* subscribe({ signal }) {
+    while (!signal.aborted) {
+      if (queue.length > 0) {
+        yield queue.shift();
+      } else {
+        await sleep(20);
+      }
+    }
+  }
+  const sessionID = "node-v2-native";
+  const ctx = {
+    session: {
+      hook: async (name, handler) => {
+        if (name === "context") {
+          contextHandler = handler;
+        }
+      },
+      get: async ({ sessionID: requested }) => ({
+        id: requested,
+        location: { directory: child },
+      }),
+    },
+    event: { subscribe },
+  };
+  const cleanup = await plugin.setup(ctx);
+  const system = [];
+  await contextHandler({ sessionID, system });
+  result.injected = system.length;
+  result.system = system;
+  queue.push({
+    id: "evt_node_created",
+    created: 1,
+    type: "session.created",
+    durable: { aggregateID: sessionID, seq: 1, version: 1 },
+    data: {
+      sessionID,
+      projectID: "prj_node_test",
+      location: { directory: child },
+      slug: "native-child",
+      version: "2.0.0",
+    },
+  });
+  await waitForEvent((record) => record.event === "start");
+  queue.push({
+    id: "evt_node_idle",
+    created: 2,
+    type: "session.idle",
+    data: { sessionID },
+  });
+  const checkpoint = await waitForEvent((record) => record.event === "checkpoint");
+  result.checkpoint = checkpoint.event;
+  result.scope = checkpoint.scope;
+  await cleanup();
+  result.cleaned = true;
 } else {
   throw new Error(`unknown mode: ${mode}`);
 }
@@ -122,17 +215,29 @@ def _fake_console(home: Path) -> Path:
     script = home / "bin" / "deepsearch-axi"
     script.parent.mkdir(parents=True)
     script.write_text(
-        f"#!{sys.executable}\nfrom deepsearch_axi._entry import main\nraise SystemExit(main())\n",
+        f"""#!{sys.executable}
+import os
+
+from deepsearch_axi._entry import main
+
+_log = os.environ.get("DEEPSEARCH_AXI_TEST_CWD")
+if _log:
+    with open(_log, "a", encoding="utf-8") as _handle:
+        _handle.write(os.getcwd() + "\\n")
+raise SystemExit(main())
+""",
         encoding="utf-8",
     )
     script.chmod(0o755)
     return script
 
 
-def _environment(home: Path) -> dict[str, str]:
+def _environment(home: Path, cwd_log: Path | None = None) -> dict[str, str]:
     environment = isolated_env(home, DEEPSEEK_API_KEY=FAKE_KEY)
     # The plugin records the absolute console-script path in this test.
     environment["PATH"] = os.environ.get("PATH", "")
+    if cwd_log is not None:
+        environment["DEEPSEARCH_AXI_TEST_CWD"] = str(cwd_log)
     return environment
 
 
@@ -159,9 +264,17 @@ def _run_plugin(
     project: Path,
     environment: dict[str, str],
     harness: Path,
+    child: Path | None = None,
 ) -> dict:
     completed = subprocess.run(
-        [NODE or "node", str(harness), mode, str(plugin), str(project)],
+        [
+            NODE or "node",
+            str(harness),
+            mode,
+            str(plugin),
+            str(project),
+            str(child or project),
+        ],
         cwd=str(project),
         env=environment,
         stdin=subprocess.DEVNULL,
@@ -250,3 +363,82 @@ def test_generated_plugin_v1_server_transforms_and_captures_events(
     records = _session_records(project_dir)
     assert records[0]["agent"] == "opencode"
     assert records[0]["scope"] == "."
+
+
+def _native_child(project_dir: Path) -> Path:
+    child = project_dir / "packages" / "agent-child"
+    child.mkdir(parents=True)
+    return child
+
+
+def _assert_child_capture(
+    result: dict,
+    project_dir: Path,
+    child: Path,
+    session_id: str,
+    cwd_log: Path,
+) -> None:
+    expected = str(child.resolve())
+    text = result["system"][0]
+    if isinstance(text, dict):
+        text = text["text"]
+    document = decode(text)
+    assert document["cwd"] == expected
+    assert document["integration"] == "installed"
+
+    # The native session directory is the spawned CLI's real process cwd, not
+    # the recorded project root.
+    lines = cwd_log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) >= 2
+    assert set(lines) == {expected}
+
+    assert result["checkpoint"] == "checkpoint"
+    assert result["scope"] == "packages/agent-child"
+    assert result["cleaned"] is True
+
+    records = _session_records(project_dir)
+    assert len(records) == 1
+    assert records[0]["agent"] == "opencode"
+    assert records[0]["scope"] == "packages/agent-child"
+    assert records[0]["event"] == "checkpoint"
+    assert session_id not in json.dumps(records)
+
+
+def test_generated_plugin_v1_real_envelopes_use_native_child_directory(
+    tmp_path: Path, home_dir: Path, project_dir: Path
+) -> None:
+    executable = _fake_console(home_dir)
+    cwd_log = tmp_path / "cwd.log"
+    environment = _environment(home_dir, cwd_log)
+    plugin = _generate(executable, environment, project_dir)
+    harness = tmp_path / "harness.mjs"
+    harness.write_text(_HARNESS, encoding="utf-8")
+    child = _native_child(project_dir)
+    # The setup invocation above ran from the project root; only plugin spawns
+    # from here on prove the native child cwd.
+    cwd_log.unlink()
+
+    result = _run_plugin("v1-native", plugin, project_dir, environment, harness, child)
+
+    assert result["id"] == "deepsearch-axi"
+    assert result["injected"] == 1
+    _assert_child_capture(result, project_dir, child, "node-v1-native", cwd_log)
+
+
+def test_generated_plugin_v2_real_envelopes_use_native_child_directory(
+    tmp_path: Path, home_dir: Path, project_dir: Path
+) -> None:
+    executable = _fake_console(home_dir)
+    cwd_log = tmp_path / "cwd.log"
+    environment = _environment(home_dir, cwd_log)
+    plugin = _generate(executable, environment, project_dir)
+    harness = tmp_path / "harness.mjs"
+    harness.write_text(_HARNESS, encoding="utf-8")
+    child = _native_child(project_dir)
+    cwd_log.unlink()
+
+    result = _run_plugin("v2-native", plugin, project_dir, environment, harness, child)
+
+    assert result["id"] == "deepsearch-axi"
+    assert result["injected"] == 1
+    _assert_child_capture(result, project_dir, child, "node-v2-native", cwd_log)
