@@ -250,8 +250,10 @@ def _record_research(cwd: Path, home: Path, tool: Tool, ok: bool, secrets: tuple
         state_root = state.find_state_root(cwd, home, secrets=secrets)
         if state_root is not None:
             state.record_research(state_root.root, state_root.scope, tool, ok)
-    except (DeepsearchError, OSError):
-        # Counters are best-effort and must never change the command result.
+    except Exception:
+        # Counters are best-effort and must never change the command result or
+        # leak a traceback from this finally block, including RecursionError
+        # from a hostile owned record.
         return
 
 

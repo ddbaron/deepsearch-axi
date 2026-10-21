@@ -56,7 +56,7 @@ def load_manifest(root: Path) -> Manifest | None:
         return None
     try:
         data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise _conflict("not valid JSON") from None
     if not isinstance(data, dict):
         raise _conflict("not a JSON object")
