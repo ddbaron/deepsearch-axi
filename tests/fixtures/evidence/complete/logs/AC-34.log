@@ -1,3 +1,0 @@
-AC-34 synthetic evidence log
-command: python scripts/generate_skill.py --check
-result: passed

@@ -1,3 +1,0 @@
-AC-28 synthetic evidence log
-command: python -m pytest -q tests/test_setup.py::test_executable_portability
-result: passed

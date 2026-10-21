@@ -51,10 +51,9 @@ jobs:
       - name: Offline behavioral tests
         env:
           DEEPSEARCH_AXI_NETGUARD: "1"
-          DEEPSEARCH_AXI_EVIDENCE_DIR: ${{ github.workspace }}/tests/fixtures/evidence/complete
         run: python -m pytest -q
-      - name: Native plugin adapter tests
-        run: python -m pytest -q tests/test_opencode.py
+      - name: Native setup and plugin adapter tests
+        run: python -m pytest -q tests/test_setup.py tests/test_opencode.py
 
   macos:
     name: macOS POSIX checks
@@ -82,7 +81,6 @@ jobs:
       - name: Offline behavioral tests
         env:
           DEEPSEARCH_AXI_NETGUARD: "1"
-          DEEPSEARCH_AXI_EVIDENCE_DIR: ${{ github.workspace }}/tests/fixtures/evidence/complete
         run: python -m pytest -q
 
   lint:

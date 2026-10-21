@@ -1,3 +1,0 @@
-AC-19 synthetic evidence log
-command: python -m pytest -q tests/test_output.py::test_full_and_hints
-result: skipped

@@ -1,3 +1,0 @@
-AC-17 synthetic evidence log
-command: python -m pytest -q tests/test_output.py::test_fetch_markdown
-result: passed

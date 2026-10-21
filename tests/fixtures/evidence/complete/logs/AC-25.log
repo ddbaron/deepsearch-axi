@@ -1,3 +1,0 @@
-AC-25 synthetic evidence log
-command: python -m pytest -q tests/test_setup.py::test_explicit_opt_in_and_scope
-result: passed

@@ -1,3 +1,0 @@
-AC-37 synthetic evidence log
-command: python -m pytest -q tests/test_ci_contract.py
-result: passed

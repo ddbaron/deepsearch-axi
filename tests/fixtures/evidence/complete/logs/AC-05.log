@@ -1,3 +1,0 @@
-AC-05 synthetic evidence log
-command: python -m pytest -q tests/test_requests.py::test_search_validation
-result: passed

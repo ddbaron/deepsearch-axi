@@ -51,6 +51,3 @@ Thumbs.db
 .deepsearch-axi/
 wheelhouse/
 node_modules/
-
-# Generated AC-43 self-record when verifying bundled evidence fixtures
-tests/fixtures/evidence/*/ac43_result.json

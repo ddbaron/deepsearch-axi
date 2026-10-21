@@ -1,3 +1,0 @@
-AC-07 synthetic evidence log
-command: python -m pytest -q tests/test_auth.py::test_precedence
-result: failed

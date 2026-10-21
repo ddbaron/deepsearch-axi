@@ -15,7 +15,6 @@ Every probe failure is contained so the home view always succeeds.
 
 from __future__ import annotations
 
-import importlib.resources
 import json
 import os
 import shlex
@@ -25,7 +24,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
-from deepsearch_axi._version import VERSION
 from deepsearch_axi.auth import probe_credential
 from deepsearch_axi.documents import collapse_home
 from deepsearch_axi.failures import local_io
@@ -67,10 +65,6 @@ _HOST_FILES: dict[AgentName, tuple[str, ...]] = {
     "codex": (".codex/hooks.json", ".codex/config.toml"),
     "opencode": (".opencode/plugins/deepsearch-axi.js",),
 }
-_PLUGIN_TEMPLATE_PARTS = ("templates", "opencode_plugin.js")
-_PLUGIN_COMMAND = "__DEEPSEARCH_AXI_COMMAND__"
-_PLUGIN_PROJECT = "__DEEPSEARCH_AXI_PROJECT__"
-_PLUGIN_VERSION = "__DEEPSEARCH_AXI_VERSION__"
 
 
 def _display_path(path: Path, home: Path) -> str:
@@ -315,15 +309,13 @@ def _codex_config_intact(path: Path) -> bool:
 
 
 def _plugin_bytes(command: Sequence[str], root: Path) -> bytes | None:
+    # Use the setup generator so readiness compares the exact bytes it writes.
+    from deepsearch_axi.hosts import opencode
+
     try:
-        template = importlib.resources.files("deepsearch_axi").joinpath(*_PLUGIN_TEMPLATE_PARTS)
-        text = template.read_text(encoding="utf-8")
+        return opencode.render_plugin(command, root)
     except (OSError, ModuleNotFoundError):
         return None
-    text = text.replace(_PLUGIN_COMMAND, json.dumps(list(command)))
-    text = text.replace(_PLUGIN_PROJECT, json.dumps(str(root)))
-    text = text.replace(_PLUGIN_VERSION, json.dumps(VERSION))
-    return text.encode("utf-8")
 
 
 def _plugin_intact(path: Path, manifest: Manifest) -> bool:

@@ -1,3 +1,0 @@
-AC-11 synthetic evidence log
-command: python -m pytest -q tests/test_errors.py::test_http_status_mapping
-result: passed

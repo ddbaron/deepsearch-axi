@@ -1,3 +1,0 @@
-AC-29 synthetic evidence log
-command: python -m pytest -q tests/test_setup.py::test_conflicts_and_write_safety
-result: passed

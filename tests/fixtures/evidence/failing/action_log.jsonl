@@ -1,6 +1,0 @@
-{"actor": "implementation-worker", "branch": "feature/b11c205b-deepsearch-axi-cli", "command": "python -m pytest -q", "outcome": "pass", "seq": 1}
-{"actor": "implementation-worker", "branch": "feature/b11c205b-deepsearch-axi-cli", "command": "python -m ruff check .", "outcome": "pass", "seq": 2}
-{"actor": "implementation-worker", "branch": "feature/b11c205b-deepsearch-axi-cli", "command": "python -m build", "outcome": "pass", "seq": 3}
-{"actor": "implementation-worker", "branch": "feature/b11c205b-deepsearch-axi-cli", "command": "git status --porcelain --untracked-files=no", "outcome": "clean", "seq": 4}
-{"actor": "implementation-worker", "branch": "feature/b11c205b-deepsearch-axi-cli", "command": "git commit -m 'issue/b11c205b-08-evidence-delivery: evidence verifier'", "outcome": "committed on the feature branch only", "seq": 5}
-{"actor": "implementation-worker", "branch": "feature/b11c205b-deepsearch-axi-cli", "command": "delivery audit", "detail": "Local refs plus this log are audited process assertions; they cannot prove absence of remote actions.", "seq": 6}

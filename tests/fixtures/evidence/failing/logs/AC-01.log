@@ -1,3 +1,0 @@
-AC-01 synthetic evidence log
-command: python -m pytest -q tests/test_packaging.py
-result: passed

@@ -1,3 +1,0 @@
-AC-22 synthetic evidence log
-command: python -m pytest -q tests/test_home_help.py::test_home_readiness
-result: passed

@@ -1,3 +1,0 @@
-AC-23 synthetic evidence log
-command: python -m pytest -q tests/test_home_help.py::test_command_help
-result: passed

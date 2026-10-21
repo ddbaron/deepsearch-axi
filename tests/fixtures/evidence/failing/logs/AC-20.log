@@ -1,3 +1,0 @@
-AC-20 synthetic evidence log
-command: python -m pytest -q tests/test_errors.py::test_response_limits_and_schema
-result: passed

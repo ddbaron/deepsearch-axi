@@ -1,3 +1,0 @@
-AC-26 synthetic evidence log
-command: python -m pytest -q tests/test_setup.py::test_native_configuration
-result: passed

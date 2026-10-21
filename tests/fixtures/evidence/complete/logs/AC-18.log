@@ -1,3 +1,0 @@
-AC-18 synthetic evidence log
-command: python -m pytest -q tests/test_output.py::test_truncation_boundaries
-result: passed

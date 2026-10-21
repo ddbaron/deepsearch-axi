@@ -1,3 +1,0 @@
-AC-02 synthetic evidence log
-command: python -m pytest -q tests/test_installation.py
-result: passed

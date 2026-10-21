@@ -1,3 +1,0 @@
-AC-30 synthetic evidence log
-command: python -m pytest -q tests/test_sessions.py::test_native_start_end_execution
-result: passed

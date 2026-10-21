@@ -1,3 +1,0 @@
-AC-16 synthetic evidence log
-command: python -m pytest -q tests/test_output.py::test_response_totals_and_empty
-result: passed

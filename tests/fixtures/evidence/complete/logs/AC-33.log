@@ -1,3 +1,0 @@
-AC-33 synthetic evidence log
-command: python -m pytest -q tests/test_sessions.py::test_state_bounds_and_concurrency
-result: passed

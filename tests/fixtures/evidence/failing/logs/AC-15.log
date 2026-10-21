@@ -1,3 +1,0 @@
-AC-15 synthetic evidence log
-command: python -m pytest -q tests/test_output.py::test_search_projection
-result: passed

@@ -1,3 +1,0 @@
-AC-21 synthetic evidence log
-command: python -m pytest -q tests/test_cli.py::test_usage_and_no_prompts
-result: passed

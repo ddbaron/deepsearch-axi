@@ -62,7 +62,7 @@ deepsearch-axi fetch https://example.com/article --full
 
 Explicitly installs or repairs project-scoped session integrations for Claude Code, Codex, and OpenCode. `--agent` defaults to `all`; a singular selection modifies only that host and tool-owned project state. Setup is the only command that registers or repairs integrations. Normal home, search, fetch, help, and version commands never create or modify host settings, plugins, skills, or repository instruction files.
 
-Setup merges native `SessionStart` and `SessionEnd` handlers into `.claude/settings.json` and `.codex/hooks.json`, ensures `[features].hooks = true` in `.codex/config.toml` while preserving unrelated TOML values and comments, and manages the dual-compatibility plugin at `.opencode/plugins/deepsearch-axi.js`. Tool-owned records live in `.deepsearch-axi/manifest.json`. Preflight conflicts, malformed host configuration, symlink escapes, and write failures leave destinations unchanged; a repeated identical setup preserves bytes and mtimes and emits zero bytes.
+Setup merges native `SessionStart` and `SessionEnd` handlers into `.claude/settings.json` and `.codex/hooks.json`, ensures `[features].hooks = true` in `.codex/config.toml` while preserving unrelated TOML values and comments, and manages the dual-compatibility plugin at `.opencode/plugins/deepsearch-axi.js`. Tool-owned records are `.deepsearch-axi/manifest.json` and `.deepsearch-axi/.gitignore`. Setup requires a resolvable `deepsearch-axi` console script; without one it returns a structured `invalid_config` error rather than registering a command that cannot run. Preflight conflicts, malformed host configuration, symlink escapes, and write failures leave destinations unchanged. A setup that changes any byte prints one document listing each selected host as `installed`, `repaired`, or `unchanged`; a repeated identical setup preserves bytes and mtimes, emits zero bytes, and exits 0.
 
 Examples:
 
@@ -174,7 +174,7 @@ Errors are TOON documents with a stable `error.code`, a safe message, an optiona
 
 Hooks are the primary integration because they deliver ambient context automatically. Run `deepsearch-axi setup` from the project root after installing the CLI. Use `deepsearch-axi setup --agent claude-code`, `--agent codex`, or `--agent opencode` to select one host. Setup resolves the running console executable, preferring a bare `deepsearch-axi` name only when PATH resolves to the same file, otherwise installing a correctly quoted absolute path. Re-running setup after relocation repairs owned start and end hooks, plugin commands, and the manifest together without touching unrelated user configuration.
 
-Claude Code and Codex receive plain TOON stdout from native `SessionStart` and `SessionEnd` commands. OpenCode uses the managed plugin with documented V1 `server()` behavior beginning at version 1.18.29 and the V2 `setup(ctx)` context-hook API; older unsupported versions are outside the tested boundary. Start succeeds with exit 0 even when the key is missing so a host session is never blocked by local readiness.
+Claude Code and Codex receive plain TOON stdout from native `SessionStart` and `SessionEnd` commands: the start hook prints the compact cwd-scoped ambient context and the end hook prints the bounded lifecycle capture confirmation. OpenCode uses the managed plugin with documented V1 `server()` behavior beginning at version 1.18.29 and the V2 `setup(ctx)` context-hook API; older unsupported versions are outside the tested boundary. The plugin spawns the recorded CLI with argv and `shell: false`, injects the returned TOON into the host system context once, and captures start, idle checkpoint, delete, and dispose events. Start succeeds with exit 0 even when the key is missing so a host session is never blocked by local readiness.
 
 ### Optional skill installation
 
@@ -254,7 +254,7 @@ python -m build
 python -m twine check dist/*
 ```
 
-The test suite is offline: it uses fake keys, isolated HOME/XDG roots, loopback stub servers, and a socket guard inherited by child Python processes. CI runs the same checks on CPython 3.10, 3.11, 3.12, 3.13, and 3.14 on Linux plus a macOS job, installs the built wheel in isolated environments, and exercises the Node-based native plugin adapters. No workflow requires a secret, live API call, publishing permission, or release step.
+The test suite is offline: it uses fake keys, isolated HOME/XDG roots, loopback stub servers, generated native hooks, a Node-executed OpenCode plugin, and a socket guard inherited by child Python processes. The installation tests need a pre-provisioned wheelhouse: CI downloads dependency wheels before running pytest, and locally you can set `DEEPSEARCH_AXI_WHEELHOUSE` or create `./wheelhouse` with the two runtime distributions. CI runs the same checks on CPython 3.10, 3.11, 3.12, 3.13, and 3.14 on Linux plus a macOS job, installs the built wheel in isolated environments, and exercises the Node-based native plugin adapters. No workflow requires a secret, live API call, publishing permission, or release step.
 
 ## License
 

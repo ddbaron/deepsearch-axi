@@ -1,3 +1,0 @@
-AC-14 synthetic evidence log
-command: python -m pytest -q tests/test_output.py::test_toon_boundary
-result: passed

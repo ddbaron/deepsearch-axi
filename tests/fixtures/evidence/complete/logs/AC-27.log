@@ -1,3 +1,0 @@
-AC-27 synthetic evidence log
-command: python -m pytest -q tests/test_setup.py::test_idempotence_and_repair
-result: passed

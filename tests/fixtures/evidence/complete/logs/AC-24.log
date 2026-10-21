@@ -1,3 +1,0 @@
-AC-24 synthetic evidence log
-command: python -m pytest -q tests/test_version.py
-result: passed
