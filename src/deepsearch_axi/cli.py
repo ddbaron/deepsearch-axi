@@ -52,12 +52,24 @@ def main(
     home_path = Path.home() if home is None else Path(home)
 
     document: JsonObject | None = None
-    secrets: tuple[str, ...] = ()
     code = EXIT_OK
     cwd_path: Path | None = None
     attempts: list[Tool] = []
-    attempt_secrets: list[str] = []
+    observed_secrets: list[str] = []
     succeeded = False
+
+    def remember(values: tuple[str, ...]) -> tuple[str, ...]:
+        """Retain every resolved credential for the output boundary.
+
+        A command can resolve a key and then fail before returning (for example
+        a credential-bearing project path in a lock error).  Recording the
+        value here, not after the command succeeds, keeps exceptional error
+        documents redacted without reading configuration for usage/help.
+        """
+        for value in values:
+            if value and value not in observed_secrets:
+                observed_secrets.append(value)
+        return values
 
     try:
         cwd_path = _resolve_cwd(cwd)
@@ -67,7 +79,7 @@ def main(
             # effective key (for example inside a directory or hostname). Hand
             # the resolved value only to the output boundary and to the state
             # scope lookup, which stores it only as an opaque identifier.
-            secrets = _redaction_secrets(environment, cwd_path, home_path)
+            secrets = remember(_redaction_secrets(environment, cwd_path, home_path))
             context = local_home.gather_local_context(
                 environment, cwd_path, home_path, secrets=secrets
             )
@@ -75,28 +87,26 @@ def main(
         elif isinstance(command, HelpCommand):
             document = documents.help_document(command.path)
         elif isinstance(command, SearchCommand):
-            document, secrets = _search(
-                command, environment, cwd_path, home_path, attempts, attempt_secrets
+            document, _ = _search(
+                command, environment, cwd_path, home_path, attempts, observed_secrets
             )
             succeeded = True
         elif isinstance(command, FetchCommand):
-            document, secrets = _fetch(
-                command, environment, cwd_path, home_path, attempts, attempt_secrets
+            document, _ = _fetch(
+                command, environment, cwd_path, home_path, attempts, observed_secrets
             )
             succeeded = True
         elif isinstance(command, SetupCommand):
             document = _setup(command, environment, cwd_path, home_path)
         elif isinstance(command, SessionCommand):
             payload = session.read_native_payload(_stdin(stdin))
-            session_secrets: list[str] = []
             secret_cache: dict[Path, tuple[str, ...]] = {}
 
             def secrets_for(path: Path) -> tuple[str, ...]:
                 cached = secret_cache.get(path)
                 if cached is None:
-                    cached = _redaction_secrets(environment, path, home_path)
+                    cached = remember(_redaction_secrets(environment, path, home_path))
                     secret_cache[path] = cached
-                    session_secrets.extend(cached)
                 return cached
 
             def context_for(path: Path) -> LocalContext:
@@ -113,7 +123,6 @@ def main(
                 secrets_for=secrets_for,
             )
             document = result.document
-            secrets = tuple(dict.fromkeys(session_secrets))
         else:  # pragma: no cover - parse_args only returns the frozen union
             raise DeepsearchError(internal_error())
     except DeepsearchError as error:
@@ -130,11 +139,11 @@ def main(
                 home_path,
                 attempts[0],
                 succeeded,
-                tuple(attempt_secrets),
+                tuple(observed_secrets),
             )
 
     if document is not None:
-        _write(document, secrets)
+        _write(document, tuple(observed_secrets))
     return code
 
 

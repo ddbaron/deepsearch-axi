@@ -33,9 +33,11 @@ from deepsearch_axi.models import (
     DeepsearchError,
     HttpReply,
     JsonObject,
+    JsonValue,
     SearchOptions,
     Tool,
 )
+from deepsearch_axi.origin import validate_base_url
 
 _READ_CHUNK = 65536
 _MAX_CHUNK_LINE = 1024
@@ -74,10 +76,56 @@ def _parse_float(value: str) -> float:
     return number
 
 
+def _has_lone_surrogate(text: str) -> bool:
+    """Return True when ``text`` contains a UTF-16 surrogate code point."""
+    return any(0xD800 <= ord(character) <= 0xDFFF for character in text)
+
+
+def _contains_lone_surrogate(value: JsonValue) -> bool:
+    """Walk a decoded payload (keys and unknown fields included) iteratively.
+
+    JSON permits ``\\ud800``-style escapes that ``json.loads`` exposes as lone
+    surrogate code points.  API data containing any such scalar is invalid;
+    it must be rejected here rather than repaired into replacement characters
+    by the renderer, which stays defensive for unrelated local documents.
+    """
+    pending: list[JsonValue] = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            if _has_lone_surrogate(item):
+                return True
+        elif isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, dict):
+            for key, child in item.items():
+                if isinstance(key, str) and _has_lone_surrogate(key):
+                    return True
+                pending.append(child)
+    return False
+
+
 def _endpoint(base_url: str) -> tuple[str, str, int | None]:
-    """Re-assert the already validated origin form before opening a socket."""
+    """Re-assert the canonical origin policy before opening a socket.
+
+    ``validate_base_url`` is the same grammar normal CLI validation applies.
+    Reusing it here keeps the importable transport from accepting an origin the
+    CLI would reject (port zero, underscore hosts, empty ``?``/``#`` delimiters,
+    scoped IPv6, userinfo, path prefixes, and so on).  An empty value is still
+    rejected: only the CLI maps unset/blank configuration to the official
+    origin, while a directly imported ``post_tool`` must never silently retarget
+    the credential.
+    """
+    if not base_url:
+        raise DeepsearchError(invalid_base_url()) from None
     try:
-        parts = urlsplit(base_url)
+        normalized = validate_base_url(base_url)
+    except DeepsearchError:
+        # Re-raise a fresh failure so no validator context (or its value) can
+        # reach the caller's exception chain.
+        raise DeepsearchError(invalid_base_url()) from None
+    try:
+        parts = urlsplit(normalized)
         scheme = parts.scheme.lower()
         host = parts.hostname
         port = parts.port
@@ -251,7 +299,7 @@ def post_tool(
             # rejected constants are all ValueError subclasses; deeply nested
             # JSON raises RecursionError.
             raise DeepsearchError(invalid_response(tool)) from None
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or _contains_lone_surrogate(payload):
             raise DeepsearchError(invalid_response(tool)) from None
         return HttpReply(status=200, payload=payload)
     except DeepsearchError:
