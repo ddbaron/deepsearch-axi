@@ -53,7 +53,7 @@ EMPTY_SEARCH_MESSAGE = "No results returned for this query."
 _INVALID_KEY_HELP = "fix DEEPSEEK_API_KEY at its source; run deepsearch-axi for status"
 _INVALID_ORIGIN_HELP = "unset DEEPSEEK_BASE_URL or set an https origin"
 _START_SESSION_HELP = "start a new agent session to load deepsearch-axi context"
-_FIELD_EXPANSION = "--fields title,url,snippet,summary,date"
+_EXPANSION_FIELDS: tuple[str, ...] = ("title", "url", "snippet", "summary", "date")
 
 
 def _redact_text(text: str, secrets: tuple[str, ...]) -> str:
@@ -132,7 +132,10 @@ def _search_help(
             request, output, full=True
         )
     elif tuple(output.fields) == DEFAULT_FIELDS:
-        second = 'deepsearch-axi search "<query>"' + flags + " " + _FIELD_EXPANSION
+        expanded = replace(output, fields=_EXPANSION_FIELDS)
+        second = 'deepsearch-axi search "<query>"' + search_flags_template(
+            request, expanded, full=False
+        )
     else:
         second = 'deepsearch-axi search "<query> site:<domain>"' + flags
     return [first, second]

@@ -16,10 +16,12 @@ import pytest
 import toon_format
 from support.env import FAKE_KEY
 
-from deepsearch_axi import documents, render
+from deepsearch_axi import documents, render, transport
+from deepsearch_axi.argv import parse_args
 from deepsearch_axi.failures import (
     internal_error,
     missing_key,
+    response_too_large,
     status_failure,
     usage_failure,
 )
@@ -33,6 +35,7 @@ from deepsearch_axi.guidance import (
     HINT_SETUP,
 )
 from deepsearch_axi.models import (
+    DEFAULT_FIELDS,
     DEFAULT_FIELDS_WITH_CONTENT,
     OFFICIAL_ORIGIN,
     REDACTED,
@@ -510,6 +513,17 @@ def test_full_and_hints() -> None:
     assert all("--full" not in hint for hint in full["help"])
     assert any("--full" in hint for hint in preview["help"])
 
+    # --full is output-only: the parsed request and HTTP body are identical.
+    preview_command = parse_args(["search", "runtime internals", "--count", "7", "--need-content"])
+    full_command = parse_args(
+        ["search", "runtime internals", "--count", "7", "--need-content", "--full"]
+    )
+    assert preview_command.options == full_command.options
+    assert transport.build_search_body(preview_command.options) == transport.build_search_body(
+        full_command.options
+    )
+    assert "--full does not raise the 8 MiB limit" in response_too_large("search").help[0]
+
     request = SearchOptions(
         query="runtime internals",
         count=7,
@@ -557,6 +571,37 @@ def test_full_and_hints() -> None:
         'deepsearch-axi search "<query>" --count 10 --fields title,url,snippet,summary,date',
     ]
 
+    # `search q --need-content --fields title,url,snippet` selects the default
+    # projection explicitly; expansion must replace it, never add a second
+    # --fields option that the production parser rejects.
+    need_content_explicit_default = _decode(
+        documents.search_document(
+            "q",
+            [_row()],
+            OutputOptions(DEFAULT_FIELDS),
+            request=SearchOptions(query="q", need_content=True),
+        )
+    )
+    assert need_content_explicit_default["help"] == [
+        HINT_FETCH,
+        'deepsearch-axi search "<query>" --count 10 --need-content '
+        "--fields title,url,snippet,summary,date",
+    ]
+
+    need_content_explicit_truncated = _decode(
+        documents.search_document(
+            "q",
+            [_row(snippet="s" * 201)],
+            OutputOptions(DEFAULT_FIELDS),
+            request=SearchOptions(query="q", need_content=True),
+        )
+    )
+    assert need_content_explicit_truncated["help"] == [
+        HINT_FETCH,
+        'deepsearch-axi search "<query>" --count 10 --need-content '
+        "--fields title,url,snippet --full",
+    ]
+
     non_default = _decode(
         documents.search_document("q", [_row()], OutputOptions(("title", "summary", "date")))
     )
@@ -576,8 +621,24 @@ def test_full_and_hints() -> None:
         'deepsearch-axi search "<query>" --count 10 --fields title,content --full',
     ]
 
-    for document in (preview, full, retained, explicit_fields, default, non_default):
-        assert len(document["help"]) <= 2
+    for document in (
+        preview,
+        full,
+        retained,
+        explicit_fields,
+        default,
+        non_default,
+        need_content_explicit_default,
+        need_content_explicit_truncated,
+    ):
+        assert 1 <= len(document["help"]) <= 2
+        for hint in document["help"]:
+            assert hint.count("--fields") <= 1, f"repeated --fields in hint: {hint!r}"
+
+    complete_fetch = _decode(
+        documents.fetch_document("https://example.com/page", {"title": "T", "content": "Body"})
+    )
+    assert "help" not in complete_fetch and "truncated" not in complete_fetch
 
 
 # --------------------------------------------------------------------------- #
