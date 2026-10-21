@@ -45,6 +45,9 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pip install -e .
           python -m pip install pipx uv
+      - name: Provision offline wheelhouse
+        run: |
+          python -m pip download --only-binary=:all: --dest wheelhouse toon-format==1.2.0 "tomlkit>=0.13.3,<1"
       - name: Offline behavioral tests
         env:
           DEEPSEARCH_AXI_NETGUARD: "1"
@@ -73,6 +76,9 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pip install -e .
           python -m pip install pipx uv
+      - name: Provision offline wheelhouse
+        run: |
+          python -m pip download --only-binary=:all: --dest wheelhouse toon-format==1.2.0 "tomlkit>=0.13.3,<1"
       - name: Offline behavioral tests
         env:
           DEEPSEARCH_AXI_NETGUARD: "1"

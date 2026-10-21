@@ -28,6 +28,7 @@ from deepsearch_axi.models import (
     HelpCommand,
     HomeCommand,
     JsonObject,
+    LocalContext,
     SearchCommand,
     SessionCommand,
     SetupCommand,
@@ -54,8 +55,7 @@ def main(
     secrets: tuple[str, ...] = ()
     code = EXIT_OK
     cwd_path: Path | None = None
-    attempted_tool: Tool | None = None
-    attempted = False
+    attempts: list[Tool] = []
     succeeded = False
 
     try:
@@ -64,30 +64,38 @@ def main(
         if isinstance(command, HomeCommand):
             context = local_home.gather_local_context(environment, cwd_path, home_path)
             document = documents.home_document(context)
+            # LocalContext deliberately carries no credential, but the home
+            # document echoes cwd/bin/origin values that may reflect the
+            # effective key (for example inside a hostname). Hand the resolved
+            # value only to the output boundary.
+            secrets = _redaction_secrets(environment, cwd_path, home_path)
         elif isinstance(command, HelpCommand):
             document = documents.help_document(command.path)
         elif isinstance(command, SearchCommand):
-            document, secrets, attempted_tool = _search(command, environment, cwd_path, home_path)
-            attempted = True
+            document, secrets = _search(command, environment, cwd_path, home_path, attempts)
             succeeded = True
         elif isinstance(command, FetchCommand):
-            document, secrets, attempted_tool = _fetch(command, environment, cwd_path, home_path)
-            attempted = True
+            document, secrets = _fetch(command, environment, cwd_path, home_path, attempts)
             succeeded = True
         elif isinstance(command, SetupCommand):
             document = _setup(command, environment, cwd_path, home_path)
         elif isinstance(command, SessionCommand):
             payload = session.read_native_payload(_stdin(stdin))
+            session_secrets: list[str] = []
+
+            def context_for(path: Path) -> LocalContext:
+                session_secrets.extend(_redaction_secrets(environment, path, home_path))
+                return local_home.gather_local_context(environment, path, home_path)
+
             result = session.handle_session(
                 command.event,
                 command.agent,
                 command.project,
                 payload,
-                context_for=lambda path: local_home.gather_local_context(
-                    environment, path, home_path
-                ),
+                context_for=context_for,
             )
             document = result.document
+            secrets = tuple(session_secrets)
         else:  # pragma: no cover - parse_args only returns the frozen union
             raise DeepsearchError(internal_error())
     except DeepsearchError as error:
@@ -97,8 +105,9 @@ def main(
         document = documents.error_document(internal_error())
         code = EXIT_FAILURE
     finally:
-        if attempted and attempted_tool is not None and cwd_path is not None:
-            _record_research(cwd_path, home_path, attempted_tool, succeeded)
+        # Search/fetch failures still count once a request was attempted.
+        if attempts and cwd_path is not None:
+            _record_research(cwd_path, home_path, attempts[0], succeeded)
 
     if document is not None:
         _write(document, secrets)
@@ -118,15 +127,34 @@ def _resolve_cwd(cwd: Path | None) -> Path:
         raise DeepsearchError(local_io(".")) from None
 
 
+def _redaction_secrets(env: Mapping[str, str], cwd: Path, home: Path) -> tuple[str, ...]:
+    """Return the effective credential for redaction only.
+
+    Home and session views expose paths and the API origin, which may reflect
+    the key even though ``LocalContext`` never stores it. Resolution mirrors
+    the search/fetch precedence (env, exact-cwd dotenv, user dotenv); missing
+    or invalid configuration contributes no secret and stays a probe concern.
+    """
+    try:
+        credential = resolve_credential(env, cwd, home)
+    except DeepsearchError:
+        return ()
+    return (credential.value,)
+
+
 def _search(
     command: SearchCommand,
     env: Mapping[str, str],
     cwd: Path,
     home: Path,
-) -> tuple[JsonObject, tuple[str, ...], Tool]:
+    attempts: list[Tool],
+) -> tuple[JsonObject, tuple[str, ...]]:
     origin = validate_base_url(env.get("DEEPSEEK_BASE_URL"))
     credential = resolve_credential(env, cwd, home)
     secrets = (credential.value,)
+    # From here a request is attempted, so the finally block must count either
+    # outcome even when post_tool or response validation raises.
+    attempts.append("search")
     reply = transport.post_tool(
         origin,
         "search",
@@ -143,7 +171,7 @@ def _search(
         request=command.options,
         secrets=secrets,
     )
-    return document, secrets, "search"
+    return document, secrets
 
 
 def _fetch(
@@ -151,10 +179,13 @@ def _fetch(
     env: Mapping[str, str],
     cwd: Path,
     home: Path,
-) -> tuple[JsonObject, tuple[str, ...], Tool]:
+    attempts: list[Tool],
+) -> tuple[JsonObject, tuple[str, ...]]:
     origin = validate_base_url(env.get("DEEPSEEK_BASE_URL"))
     credential = resolve_credential(env, cwd, home)
     secrets = (credential.value,)
+    # See _search: failures past this point are attempted research calls.
+    attempts.append("fetch")
     reply = transport.post_tool(
         origin,
         "fetch",
@@ -165,7 +196,7 @@ def _fetch(
         raise DeepsearchError(status_failure(reply.status, "fetch"))
     page = responses.validate_fetch_response(reply.payload or {})
     document = documents.fetch_document(command.url, page, command.full, secrets=secrets)
-    return document, secrets, "fetch"
+    return document, secrets
 
 
 def _setup(

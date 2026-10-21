@@ -1,13 +1,14 @@
 """Security acceptance tests for the single-request transport.
 
 These are the origin-independent, in-process ``post_tool`` pieces: redirect
-refusal, HTTPS verification, proxy/.netrc independence and origin re-assertion.
-CLI-level cases are added by the wiring issue.
+refusal, HTTPS verification, proxy/.netrc independence and origin re-assertion,
+plus CLI-level redaction of keys reflected by home/session paths or origins.
 """
 
 from __future__ import annotations
 
 import http.client
+import json
 import netrc
 import ssl
 from collections.abc import Callable
@@ -15,7 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from support.env import FAKE_KEY
+from support.cli import decode, run_cli
+from support.env import FAKE_KEY, isolated_env
 from support.stub_server import StubResponse, StubServer, json_response
 
 from deepsearch_axi import transport
@@ -23,6 +25,7 @@ from deepsearch_axi._version import VERSION
 from deepsearch_axi.failures import status_failure
 from deepsearch_axi.models import (
     EXIT_FAILURE,
+    REDACTED,
     TOOL_PATHS,
     Credential,
     DeepsearchError,
@@ -249,3 +252,66 @@ def test_origin_policy(
     assert headers["Authorization"] == f"Bearer {FAKE_KEY}"
     assert "Proxy-Authorization" not in headers
     assert "netrcuser" not in headers["Authorization"]
+
+
+# AC-01/AC-02 (security): home and session views must redact the effective key
+# even when it is reflected by a path or by the validated API origin.
+
+
+def test_home_redacts_env_key_reflected_in_origin(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    project = tmp_path / "project"
+    project.mkdir()
+    env = isolated_env(
+        home,
+        DEEPSEEK_API_KEY=FAKE_KEY,
+        DEEPSEEK_BASE_URL=f"https://{FAKE_KEY}.example.com",
+    )
+    run = run_cli([], env=env, cwd=project)
+    assert run.code == 0, run.stderr
+    document = decode(run.stdout)
+    assert document["auth"] == {"state": "configured", "source": "env", "verified": False}
+    assert document["api"] == {
+        "origin": f"https://{REDACTED}.example.com",
+        "state": "ready",
+    }
+    assert FAKE_KEY not in run.stdout
+    assert FAKE_KEY not in run.stderr
+
+
+def test_home_redacts_dotenv_key_reflected_in_origin(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".env").write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+    env = isolated_env(home, DEEPSEEK_BASE_URL=f"https://{FAKE_KEY}.example.com")
+    run = run_cli([], env=env, cwd=project)
+    assert run.code == 0, run.stderr
+    document = decode(run.stdout)
+    assert document["auth"]["source"] == "cwd_dotenv"
+    assert document["api"]["origin"] == f"https://{REDACTED}.example.com"
+    assert FAKE_KEY not in run.stdout
+    assert FAKE_KEY not in run.stderr
+
+
+def test_session_redacts_dotenv_key_reflected_in_cwd(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    project = tmp_path / FAKE_KEY
+    project.mkdir()
+    (project / ".env").write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+    payload = json.dumps({"session_id": "session-1", "cwd": str(project)}).encode("utf-8")
+    env = isolated_env(home)
+    run = run_cli(
+        ["session", "start", "--agent", "codex", "--project", str(project)],
+        env=env,
+        cwd=project,
+        stdin=payload,
+    )
+    assert run.code == 0, run.stderr
+    document = decode(run.stdout)
+    assert REDACTED in document["cwd"]
+    assert FAKE_KEY not in run.stdout
+    assert FAKE_KEY not in run.stderr

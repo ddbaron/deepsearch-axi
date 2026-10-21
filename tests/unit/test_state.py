@@ -512,3 +512,33 @@ def test_symlinked_lock_file_cannot_create_files_outside_the_project(
     except DeepsearchError:
         pass
     assert not outside.exists()
+
+
+def test_cli_failed_research_updates_failure_counter(
+    project: Path,
+    tmp_path: Path,
+    stub,
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    from support.env import FAKE_KEY, isolated_env
+    from support.stub_server import StubResponse
+
+    from deepsearch_axi.cli import main
+
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    server = stub(lambda request: StubResponse(status=401))
+    env = isolated_env(
+        home,
+        DEEPSEEK_API_KEY=FAKE_KEY,
+        DEEPSEEK_BASE_URL=server.base_url,
+    )
+
+    assert main(["search", "fails"], env=env, cwd=project, home=home) == 1
+    captured = capsysbinary.readouterr()
+    assert FAKE_KEY not in captured.out.decode("utf-8")
+    assert FAKE_KEY not in captured.err.decode("utf-8")
+
+    _, activity = read_view(project, ".")
+    assert activity == Activity(search_ok=0, search_fail=1, fetch_ok=0, fetch_fail=0)
+    assert len(server.requests) == 1

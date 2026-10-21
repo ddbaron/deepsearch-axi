@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 import tomlkit
+from support.env import SITECUSTOMIZE_DIR
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WHEEL_LIMIT = 153_600
@@ -49,6 +50,8 @@ def _clean_env(home: Path) -> dict[str, str]:
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_CACHE_HOME": str(home / ".cache"),
         "XDG_DATA_HOME": str(home / ".local" / "share"),
+        "PYTHONPATH": str(SITECUSTOMIZE_DIR),
+        "DEEPSEARCH_AXI_NETGUARD": "1",
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     }

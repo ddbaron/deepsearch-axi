@@ -1,15 +1,20 @@
 """AC-02: offline installation through pip, pipx and uv tool.
 
 Every installer receives a temporary HOME, PIPX_HOME/UV_TOOL_DIR and a local
-wheelhouse, then the installed console script runs ``--version``, the no-arg
-home view and one fake-key search against a loopback stub. A snapshot of the
-operator tool directories proves nothing was written outside the temp tree.
+pre-provisioned wheelhouse, then the installed console script runs
+``--version``, the no-arg home view and one fake-key search against a loopback
+stub. Child processes inherit only the sitecustomize network guard (never the
+source tree), and a snapshot of the operator tool directories proves nothing
+was written outside the temp tree. Missing wheels or installer tools fail
+loudly instead of reaching for the public network.
 """
 
 from __future__ import annotations
 
 import os
 import pwd
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -17,7 +22,7 @@ from pathlib import Path
 
 import pytest
 import toon_format
-from support.env import FAKE_KEY
+from support.env import FAKE_KEY, SITECUSTOMIZE_DIR
 from support.stub_server import StubServer, json_response
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -44,11 +49,17 @@ def _clean_env(home: Path, **overrides: str) -> dict[str, str]:
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_CACHE_HOME": str(home / ".cache"),
         "XDG_DATA_HOME": str(home / ".local" / "share"),
+        # Only the harness guard — never the source package — is importable so
+        # installed executables prove the wheel itself is what runs.
+        "PYTHONPATH": str(SITECUSTOMIZE_DIR),
+        "DEEPSEARCH_AXI_NETGUARD": "1",
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
         "PIP_NO_INPUT": "1",
+        "PIP_NO_INDEX": "1",
         "PIP_CONFIG_FILE": os.devnull,
         "PYTHONDONTWRITEBYTECODE": "1",
         "UV_NO_PROGRESS": "1",
+        "UV_OFFLINE": "1",
         "UV_PYTHON_DOWNLOADS": "never",
     }
     env.update({name: str(value) for name, value in overrides.items()})
@@ -106,31 +117,16 @@ def _has_dependency_wheels(directory: Path) -> bool:
     )
 
 
-def _download_dependencies(destination: Path, work: Path) -> None:
-    env = _clean_env(work / "home", PIP_CACHE_DIR=str(work / "pip-cache"))
-    completed = _run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "download",
-            "--only-binary=:all:",
-            "--dest",
-            destination,
-            "toon-format==1.2.0",
-            "tomlkit>=0.13.3,<1",
-        ],
-        env,
-        timeout=300,
+def _wheelhouse_failure(destination: Path) -> None:
+    pytest.fail(
+        "offline installation tests need a pre-provisioned wheelhouse before "
+        "pytest: set DEEPSEARCH_AXI_WHEELHOUSE or create ./wheelhouse with "
+        "toon_format-*.whl and tomlkit-*.whl. Provision it with:\n"
+        "  python -m pip download --only-binary=:all: --dest wheelhouse "
+        'toon-format==1.2.0 "tomlkit>=0.13.3,<1"\n'
+        f"Checked: {destination}",
+        pytrace=False,
     )
-    if completed.returncode != 0:
-        pytest.fail(
-            "offline installation tests need a pre-provisioned wheelhouse "
-            "(DEEPSEARCH_AXI_WHEELHOUSE or ./wheelhouse) containing toon-format "
-            "and tomlkit wheels, and automatic download failed:\n"
-            f"{completed.stdout}\n{completed.stderr}",
-            pytrace=False,
-        )
 
 
 @pytest.fixture(scope="module")
@@ -159,7 +155,7 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory, project_wheel: Path) ->
                 shutil.copy2(wheel, destination / wheel.name)
 
     if not _has_dependency_wheels(destination):
-        _download_dependencies(destination, work)
+        _wheelhouse_failure(destination)
 
     shutil.copy2(project_wheel, destination / project_wheel.name)
     assert _has_dependency_wheels(destination)
@@ -179,43 +175,15 @@ def _create_venv(path: Path, home: Path) -> Path:
 
 
 @pytest.fixture(scope="module")
-def pipx_path(tmp_path_factory: pytest.TempPathFactory, wheelhouse: Path) -> Path:
+def pipx_path() -> Path:
     found = shutil.which("pipx")
-    if found:
-        return Path(found)
-    work = tmp_path_factory.mktemp("pipx-tool")
-    python = _create_venv(work / "venv", work / "home")
-    env = _clean_env(work / "home", PIP_CACHE_DIR=str(work / "pip-cache"))
-    offline = _run(
-        [
-            python,
-            "-m",
-            "pip",
-            "install",
-            "--no-index",
-            "--find-links",
-            wheelhouse,
-            "pipx",
-        ],
-        env,
-        timeout=300,
-    )
-    if offline.returncode != 0:
-        completed = _run(
-            [python, "-m", "pip", "install", "pipx"],
-            env,
-            timeout=300,
+    if found is None:
+        pytest.fail(
+            "pipx is required for the installation tests; provision it before "
+            "pytest (CI installs pipx into the job environment)",
+            pytrace=False,
         )
-        if completed.returncode != 0:
-            pytest.fail(
-                "pipx is required for the installation tests; CI installs it and "
-                "this environment could not provision it:\n"
-                f"{completed.stdout}\n{completed.stderr}",
-                pytrace=False,
-            )
-    executable = work / "venv" / "bin" / "pipx"
-    assert executable.is_file(), "pipx provisioning did not create an executable"
-    return executable
+    return Path(found)
 
 
 @pytest.fixture(scope="module")
@@ -223,7 +191,8 @@ def uv_path() -> Path:
     found = shutil.which("uv")
     if found is None:
         pytest.fail(
-            "uv is required for the installation tests; CI installs it before pytest",
+            "uv is required for the installation tests; provision it before "
+            "pytest (CI installs uv into the job environment)",
             pytrace=False,
         )
     return Path(found)
@@ -352,6 +321,56 @@ def _install(
     return _install_uv(tmp, wheelhouse, uv, project_wheel)
 
 
+def _script_python(executable: Path) -> Path:
+    """Resolve the console script preamble to the installed tool interpreter."""
+    lines = executable.read_text(encoding="utf-8").splitlines()
+    assert lines and lines[0].startswith("#!"), lines[:1]
+    candidates: list[str] = []
+    parts = shlex.split(lines[0][2:].strip())
+    if Path(parts[0]).name == "env":
+        candidates.extend(part for part in parts[1:] if not part.startswith("-"))
+    elif Path(parts[0]).name != "sh":
+        candidates.append(parts[0])
+    # pipx rewrites console scripts as a /bin/sh trampoline that execs the
+    # private venv interpreter on the following line.
+    for line in lines[:3]:
+        match = re.search(r"'''exec'\s+'([^']+)'", line)
+        if match:
+            candidates.append(match.group(1))
+    for candidate in candidates:
+        interpreter = Path(candidate)
+        if interpreter.is_file():
+            return interpreter
+    pytest.fail(f"installed script has an unusable interpreter: {lines[:3]}", pytrace=False)
+
+
+_NETGUARD_PROBE = "import socket\nsocket.create_connection(('192.0.2.1', 80), timeout=2)\n"
+
+
+def _assert_installed_process_guards(executable: Path, env: dict[str, str], cwd: Path) -> None:
+    """Prove the installed interpreter imports the wheel and blocks non-loopback."""
+    interpreter = _script_python(executable)
+    probe = _run(
+        [
+            interpreter,
+            "-c",
+            "import deepsearch_axi, sys; print(deepsearch_axi.__file__); print(sys.path)",
+        ],
+        env,
+        cwd=cwd,
+    )
+    _require_success(probe, "installed deepsearch_axi import probe")
+    lines = probe.stdout.splitlines()
+    module = Path(lines[0]).resolve()
+    source_dir = (REPO_ROOT / "src").resolve()
+    assert source_dir not in module.parents, f"probe imported the source tree: {module}"
+    assert str(source_dir) not in lines[1], lines[1]
+
+    guarded = _run([interpreter, "-c", _NETGUARD_PROBE], env, cwd=cwd, timeout=30)
+    assert guarded.returncode != 0, "non-loopback connect unexpectedly succeeded"
+    assert "blocked by the test guard" in guarded.stderr, guarded.stderr
+
+
 @pytest.mark.parametrize("installer", INSTALLERS)
 def test_offline_installation_and_runs(
     installer: str,
@@ -382,6 +401,8 @@ def test_offline_installation_and_runs(
     assert version.returncode == 0, version.stderr
     assert version.stdout == "0.1.0\n"
     assert version.stderr == ""
+
+    _assert_installed_process_guards(executable, base_env, project)
 
     home_env = _clean_env(home, DEEPSEEK_API_KEY=FAKE_KEY)
     home_run = _run([executable], home_env, cwd=project)
@@ -422,5 +443,17 @@ def test_offline_installation_and_runs(
     assert captured.path == "/v1/tools/search"
     assert captured.headers["Authorization"] == f"Bearer {FAKE_KEY}"
     assert captured.json["query"] == "offline installation probe"
+
+    blocked_env = _clean_env(
+        home,
+        DEEPSEEK_API_KEY=FAKE_KEY,
+        DEEPSEEK_BASE_URL="https://192.0.2.1",
+    )
+    blocked = _run([executable, "search", "guarded probe"], blocked_env, cwd=project)
+    assert blocked.returncode == 1, blocked.stderr
+    blocked_document = toon_format.decode(blocked.stdout, strict=True)
+    assert blocked_document["error"]["code"] == "transport_error"
+    assert FAKE_KEY not in blocked.stdout
+    assert FAKE_KEY not in blocked.stderr
 
     assert _tool_dir_snapshot() == before, "installation wrote outside its temp homes"
