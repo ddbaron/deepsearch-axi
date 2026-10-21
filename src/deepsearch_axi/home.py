@@ -41,17 +41,24 @@ from deepsearch_axi.origin import validate_base_url
 from deepsearch_axi.state import find_state_root, read_view
 
 _HOOK_EVENTS = ("SessionStart", "SessionEnd")
-# Claude Code matches a hook group's matcher against the lifecycle identifier:
-# the session source for SessionStart and the end reason for SessionEnd. The
-# integration only captures every lifecycle event while the owned group's
-# matcher covers all documented identifiers; a missing matcher matches all.
+# Claude Code matches a hook group's matcher against the lifecycle identifier,
+# the session source for SessionStart and the end reason for SessionEnd, using
+# literal alternatives rather than a regular expression. The integration only
+# captures every lifecycle event while the owned group's matcher covers all
+# documented identifiers; a missing matcher matches all, and whitespace is
+# significant (never trimmed). Claude Code also documents a "fork" SessionStart
+# source that this integration does not model. Setup never writes a matcher, so
+# an owned matcher naming "fork" is conservatively stale rather than trusted.
 _CLAUDE_MATCHER_VALUES: dict[str, tuple[str, ...]] = {
     "SessionStart": ("startup", "resume", "clear", "compact"),
     "SessionEnd": ("clear", "resume", "logout", "prompt_input_exit", "other"),
 }
 # Native match-all matchers. Claude Code documents both; the setup merge writes
-# no matcher at all, and Codex has no documented lifecycle matcher identifiers,
-# so any other Codex matcher is treated as an unverified narrowing (stale).
+# no matcher at all. Codex now documents lifecycle matchers too (SessionStart
+# startup|resume|clear|compact|fork, SessionEnd other), but setup never writes
+# one there. Readiness therefore keeps every non-match-all Codex matcher stale:
+# a host-controlled pattern is never compiled and cannot prove capture, so the
+# conservative answer wins.
 _MATCH_ALL_MATCHERS = frozenset({"", "*"})
 _MATCHER_LENGTH_LIMIT = 256
 _NO_MATCHER = object()
@@ -183,12 +190,15 @@ def _matcher_covers(matcher: object, event: str, agent: AgentName) -> bool:
     A group without a matcher and the documented match-all forms match every
     lifecycle identifier. Claude Code additionally accepts only literal
     identifiers or pipe-separated alternations of the identifiers it documents
-    for that event, and the owned group must cover every one of them. Anything
-    else, including a syntactically plausible regular expression, is stale:
-    host-controlled patterns must never be compiled because an unverified
-    narrowing cannot prove capture and a pathologic pattern could hang home.
-    Codex has no documented lifecycle matcher identifiers, so only the
-    match-all forms are trusted there; setup never writes a Codex matcher.
+    for that event, and the owned group must cover every one of them. The native
+    matcher treats whitespace literally, so alternatives are compared as-is: an
+    alternative padded with whitespace is not a documented identifier and makes
+    the group stale. Anything else, including a syntactically plausible regular
+    expression, is stale: host-controlled patterns must never be compiled
+    because an unverified narrowing cannot prove capture and a pathologic
+    pattern could hang home.
+    Codex documents lifecycle matchers too, but setup never writes one, so only
+    the match-all forms are trusted there; every other matcher stays stale.
     """
     if matcher is _NO_MATCHER:
         return True
@@ -199,7 +209,7 @@ def _matcher_covers(matcher: object, event: str, agent: AgentName) -> bool:
     if len(matcher) > _MATCHER_LENGTH_LIMIT or agent != "claude-code":
         return False
     known = _CLAUDE_MATCHER_VALUES[event]
-    tokens = [token.strip() for token in matcher.split("|")]
+    tokens = matcher.split("|")
     if not all(token in known for token in tokens):
         return False
     return set(tokens) >= set(known)

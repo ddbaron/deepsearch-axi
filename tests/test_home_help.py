@@ -169,6 +169,12 @@ def _write_setup(
         claude_document["hooks"]["SessionStart"][0]["matcher"] = "["
     elif corrupt == "claude-matcher-valid":
         claude_document["hooks"]["SessionStart"][0]["matcher"] = "startup|resume|clear|compact"
+    elif corrupt == "claude-matcher-start-spaced":
+        # The native matcher compares literal alternatives, so this padded
+        # matcher does not actually match any SessionStart source and is stale.
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = (
+            " startup | resume | clear | compact "
+        )
     elif corrupt == "claude-matcher-star":
         # "*" is Claude Code's documented match-all matcher, not an invalid regex.
         claude_document["hooks"]["SessionStart"][0]["matcher"] = "*"
@@ -184,6 +190,12 @@ def _write_setup(
     elif corrupt == "claude-matcher-end-valid":
         claude_document["hooks"]["SessionEnd"][0]["matcher"] = (
             "clear|resume|logout|prompt_input_exit|other"
+        )
+    elif corrupt == "claude-matcher-end-spaced":
+        # Whitespace around every alternative is literal, so even a matcher
+        # naming the full end-reason set matches none of them and is stale.
+        claude_document["hooks"]["SessionEnd"][0]["matcher"] = (
+            "clear | resume | logout | prompt_input_exit | other"
         )
     elif corrupt == "claude-matcher-redos":
         # A host-controlled catastrophic-backtracking pattern must be rejected
@@ -207,8 +219,9 @@ def _write_setup(
             {"hooks": [{"type": "command", "command": codex_commands[0]}]}
         )
     elif corrupt == "codex-matcher":
-        # Codex has no documented lifecycle matcher identifiers, so setup never
-        # writes one; a narrowing added by hand is not an installed integration.
+        # Codex documents lifecycle matchers too, but setup never writes one;
+        # readiness conservatively treats any narrowing as stale rather than
+        # compiling a host-controlled pattern.
         codex_document["hooks"]["SessionStart"][0]["matcher"] = "startup"
     if corrupt == "codex-json":
         codex_path.write_text("{not valid json\n", encoding="utf-8")
@@ -406,12 +419,16 @@ def test_home_readiness(
         ("claude-disable-all", "claude-code"),
         ("claude-foreign-project", "claude-code"),
         # The owned group's matcher must still cover every SessionStart source.
+        # Whitespace is literal in the native matcher, so padded alternatives
+        # match nothing and must never certify the integration as installed.
         ("claude-matcher-never", "claude-code"),
         ("claude-matcher-partial", "claude-code"),
         ("claude-matcher-untyped", "claude-code"),
         ("claude-matcher-invalid", "claude-code"),
+        ("claude-matcher-start-spaced", "claude-code"),
         ("claude-matcher-end-never", "claude-code"),
         ("claude-matcher-end-partial", "claude-code"),
+        ("claude-matcher-end-spaced", "claude-code"),
         ("codex-matcher", "codex"),
         ("plugin-unmanaged", "opencode"),
         ("plugin-mismatch", "opencode"),
