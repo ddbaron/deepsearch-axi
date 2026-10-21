@@ -17,6 +17,7 @@ import pwd
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -348,6 +349,14 @@ def _script_python(executable: Path) -> Path:
 _NETGUARD_PROBE = "import socket\nsocket.create_connection(('192.0.2.1', 80), timeout=2)\n"
 
 
+def _closed_loopback_url() -> str:
+    """Return an http origin on a loopback port nothing is listening on."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
 def _assert_installed_process_guards(executable: Path, env: dict[str, str], cwd: Path) -> None:
     """Prove the installed interpreter imports the wheel and blocks non-loopback."""
     interpreter = _script_python(executable)
@@ -445,10 +454,15 @@ def test_offline_installation_and_runs(
     assert captured.headers["Authorization"] == f"Bearer {FAKE_KEY}"
     assert captured.json["query"] == "offline installation probe"
 
+    # A refused loopback connection maps to transport_error everywhere. A
+    # blackholed non-loopback address cannot: pipx appends -E to console-script
+    # shebangs, so the PYTHONPATH-mounted harness guard is not imported there
+    # and the child instead spends a real 30s connect timeout reporting
+    # ``timeout``.
     blocked_env = _clean_env(
         home,
         DEEPSEEK_API_KEY=FAKE_KEY,
-        DEEPSEEK_BASE_URL="https://192.0.2.1",
+        DEEPSEEK_BASE_URL=_closed_loopback_url(),
     )
     blocked = _run([executable, "search", "guarded probe"], blocked_env, cwd=project)
     assert blocked.returncode == 1, blocked.stderr

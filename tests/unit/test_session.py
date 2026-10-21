@@ -140,16 +140,22 @@ def test_read_native_payload_accepts_a_native_fixture(tmp_path: Path) -> None:
         (io.BytesIO(b"null"), "payload is not a JSON object"),
         (io.BytesIO(b'"text"'), "payload is not a JSON object"),
         (io.BytesIO(b"42"), "payload is not a JSON object"),
-        (io.BytesIO(b"[" * 30000 + b"]" * 30000), "payload is not valid JSON"),
+        # CPython 3.13 and earlier hit the recursion limit while decoding this
+        # input; 3.14 decodes it and rejects the resulting non-object.  Both
+        # are rejections, so only the stable error code is asserted for it.
+        (io.BytesIO(b"[" * 30000 + b"]" * 30000), None),
         (io.StringIO("{}"), "stdin is not binary"),
     ],
 )
-def test_read_native_payload_rejects_adversarial_input(stream: object, reason: str) -> None:
+def test_read_native_payload_rejects_adversarial_input(stream: object, reason: str | None) -> None:
     with pytest.raises(DeepsearchError) as excinfo:
         read_native_payload(stream)  # type: ignore[arg-type]
     failure = excinfo.value.failure
     assert failure.code == "invalid_event"
-    assert reason in failure.message
+    if reason is not None:
+        assert reason in failure.message
+    else:
+        assert failure.message.startswith("The native session event is invalid: ")
     assert 1 <= len(failure.help) <= 2
 
 
