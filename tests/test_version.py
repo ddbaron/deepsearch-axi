@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -11,9 +13,12 @@ import time
 from importlib import metadata
 from pathlib import Path
 
+import tomlkit
+
 from deepsearch_axi._version import VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
 ALIASES = ("-v", "-V", "--version")
 
 
@@ -35,23 +40,61 @@ def _run(
     )
 
 
+def _project_version() -> str:
+    document = tomlkit.parse((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return str(document["project"]["version"])
+
+
 def _expected() -> bytes:
-    return (VERSION + "\n").encode("utf-8")
+    return (_project_version() + "\n").encode("utf-8")
 
 
 def _declared_version() -> str:
     try:
         return metadata.version("deepsearch-axi")
     except metadata.PackageNotFoundError:
-        text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        match = re.search(r'^version = "([^"]+)"$', text, re.MULTILINE)
-        assert match is not None
-        return match.group(1)
+        return _project_version()
 
 
 def test_version_constant_matches_metadata() -> None:
-    assert VERSION == "0.1.0"
     assert VERSION == _declared_version()
+    assert VERSION == _project_version()
+
+
+def test_source_tree_entrypoint_reports_the_project_version(
+    env: dict[str, str], tmp_path: Path
+) -> None:
+    origin = subprocess.run(
+        [sys.executable, "-c", "import deepsearch_axi; print(deepsearch_axi.__file__)"],
+        cwd=str(tmp_path),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=60,
+    )
+    assert origin.returncode == 0, origin.stderr
+    assert SRC_DIR in Path(origin.stdout.decode("utf-8").strip()).resolve().parents
+    completed = _run(["--version"], env=env, cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == _expected()
+    assert completed.stderr == b""
+
+
+def test_source_tree_version_comes_from_pyproject(env: dict[str, str], tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    shutil.copytree(SRC_DIR, checkout / "src", ignore=shutil.ignore_patterns("__pycache__"))
+    project = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    project = re.sub(r'(?m)^version = "[^"]+"$', 'version = "9.8.7"', project, count=1)
+    assert project.count('version = "9.8.7"') == 1
+    (checkout / "pyproject.toml").write_text(project, encoding="utf-8")
+    source_env = dict(
+        env,
+        PYTHONPATH=os.pathsep.join((str(checkout / "src"), env["PYTHONPATH"])),
+    )
+    completed = _run(["--version"], env=source_env, cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == b"9.8.7\n"
+    assert completed.stderr == b""
 
 
 def test_sole_version_aliases_print_exact_bytes(env: dict[str, str], tmp_path: Path) -> None:
