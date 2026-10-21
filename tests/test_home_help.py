@@ -169,6 +169,26 @@ def _write_setup(
         claude_document["hooks"]["SessionStart"][0]["matcher"] = "["
     elif corrupt == "claude-matcher-valid":
         claude_document["hooks"]["SessionStart"][0]["matcher"] = "startup|resume|clear|compact"
+    elif corrupt == "claude-matcher-star":
+        # "*" is Claude Code's documented match-all matcher, not an invalid regex.
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = "*"
+    elif corrupt == "claude-matcher-empty":
+        # An empty matcher is also documented as match-all.
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = ""
+    elif corrupt == "claude-matcher-end-never":
+        # SessionEnd fires for every end reason, so a narrowed owned matcher is stale.
+        claude_document["hooks"]["SessionEnd"][0]["matcher"] = "^never-a-session-end$"
+    elif corrupt == "claude-matcher-end-partial":
+        # Covering just one end reason still loses every other SessionEnd.
+        claude_document["hooks"]["SessionEnd"][0]["matcher"] = "clear"
+    elif corrupt == "claude-matcher-end-valid":
+        claude_document["hooks"]["SessionEnd"][0]["matcher"] = (
+            "clear|resume|logout|prompt_input_exit|other"
+        )
+    elif corrupt == "claude-matcher-redos":
+        # A host-controlled catastrophic-backtracking pattern must be rejected
+        # by grammar, never compiled by home's readiness probe.
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = "^(.?){50}X$"
     elif corrupt == "claude-matcher-unrelated-bad":
         # Both bad matchers sit on unrelated groups, which must stay ignored.
         claude_document["hooks"]["SessionStart"][1]["matcher"] = 123
@@ -186,6 +206,10 @@ def _write_setup(
         codex_document["hooks"]["SessionStart"].append(
             {"hooks": [{"type": "command", "command": codex_commands[0]}]}
         )
+    elif corrupt == "codex-matcher":
+        # Codex has no documented lifecycle matcher identifiers, so setup never
+        # writes one; a narrowing added by hand is not an installed integration.
+        codex_document["hooks"]["SessionStart"][0]["matcher"] = "startup"
     if corrupt == "codex-json":
         codex_path.write_text("{not valid json\n", encoding="utf-8")
     else:
@@ -246,8 +270,16 @@ def _home(
     executable: Path,
     *,
     read_guard: list[Path] | None = None,
+    timeout: float = 60,
 ):
-    run = run_cli([], env=env, cwd=cwd, executable=[str(executable)], read_guard=read_guard or ())
+    run = run_cli(
+        [],
+        env=env,
+        cwd=cwd,
+        executable=[str(executable)],
+        read_guard=read_guard or (),
+        timeout=timeout,
+    )
     assert run.code == 0, (run.stdout, run.stderr)
     assert run.stderr == ""
     return run, decode(run.stdout)
@@ -378,6 +410,9 @@ def test_home_readiness(
         ("claude-matcher-partial", "claude-code"),
         ("claude-matcher-untyped", "claude-code"),
         ("claude-matcher-invalid", "claude-code"),
+        ("claude-matcher-end-never", "claude-code"),
+        ("claude-matcher-end-partial", "claude-code"),
+        ("codex-matcher", "codex"),
         ("plugin-unmanaged", "opencode"),
         ("plugin-mismatch", "opencode"),
         ("plugin-missing-file", "opencode"),
@@ -391,9 +426,17 @@ def test_home_readiness(
             if agent != expected_stale:
                 assert state == "installed", (corrupt, agent, stale["integrations"])
 
-    # A valid owned matcher still captures every start, and malformed matchers
-    # on unrelated groups can never change the owned-group result.
-    for corrupt in ("claude-matcher-valid", "claude-matcher-unrelated-bad"):
+    # A valid owned matcher still captures every start, the documented match-all
+    # forms ("*" and "") are installed, a full SessionEnd alternation is
+    # installed, and malformed matchers on unrelated groups can never change the
+    # owned-group result.
+    for corrupt in (
+        "claude-matcher-valid",
+        "claude-matcher-star",
+        "claude-matcher-empty",
+        "claude-matcher-end-valid",
+        "claude-matcher-unrelated-bad",
+    ):
         project = tmp_path / f"ready-{corrupt}"
         _write_setup(project, executable, corrupt=corrupt)
         _, ready = _home(dict(base_env, DEEPSEEK_API_KEY=FAKE_KEY), project, executable)
@@ -402,6 +445,21 @@ def test_home_readiness(
             "codex": "installed",
             "opencode": "installed",
         }, (corrupt, ready["integrations"])
+
+    # A repository-controlled catastrophic-backtracking matcher must not be
+    # compiled: readiness rejects the grammar and home still exits promptly.
+    redos_project = tmp_path / "stale-claude-matcher-redos"
+    _write_setup(redos_project, executable, corrupt="claude-matcher-redos")
+    before_redos = _snapshot(redos_project)
+    _, redos = _home(
+        dict(base_env, DEEPSEEK_API_KEY=FAKE_KEY),
+        redos_project,
+        executable,
+        timeout=5,
+    )
+    assert redos["integrations"]["claude-code"] == "stale"
+    assert server.requests == []
+    assert _snapshot(redos_project) == before_redos
 
     identity_project = tmp_path / "stale-identity"
     _write_setup(identity_project, executable, corrupt="stale-executable")

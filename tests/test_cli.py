@@ -119,6 +119,8 @@ _USAGE_CASES: tuple[tuple[list[str], str, str], ...] = (
     (["search", "q", "--version"], "search", "only valid alone"),
     (["fetch", "https://example.com/", "-v"], "fetch", "only valid alone"),
     (["setup", "--version"], "setup", "only valid alone"),
+    (["search", "q", "-V"], "search", "only valid alone"),
+    (["setup", "-v"], "setup", "only valid alone"),
     (
         ["session", "start", "--agent", "codex", "--project", "/tmp", "--version"],
         "session start",

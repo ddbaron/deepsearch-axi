@@ -18,7 +18,6 @@ from __future__ import annotations
 import importlib.resources
 import json
 import os
-import re
 import shlex
 import shutil
 import sys
@@ -42,10 +41,19 @@ from deepsearch_axi.origin import validate_base_url
 from deepsearch_axi.state import find_state_root, read_view
 
 _HOOK_EVENTS = ("SessionStart", "SessionEnd")
-# Claude Code matches a SessionStart hook group's matcher against the source of
-# the session start. The integration only captures every start when the owned
-# group's matcher covers all of these sources; a missing matcher matches all.
-_CLAUDE_SESSION_START_SOURCES = ("startup", "resume", "clear", "compact")
+# Claude Code matches a hook group's matcher against the lifecycle identifier:
+# the session source for SessionStart and the end reason for SessionEnd. The
+# integration only captures every lifecycle event while the owned group's
+# matcher covers all documented identifiers; a missing matcher matches all.
+_CLAUDE_MATCHER_VALUES: dict[str, tuple[str, ...]] = {
+    "SessionStart": ("startup", "resume", "clear", "compact"),
+    "SessionEnd": ("clear", "resume", "logout", "prompt_input_exit", "other"),
+}
+# Native match-all matchers. Claude Code documents both; the setup merge writes
+# no matcher at all, and Codex has no documented lifecycle matcher identifiers,
+# so any other Codex matcher is treated as an unverified narrowing (stale).
+_MATCH_ALL_MATCHERS = frozenset({"", "*"})
+_MATCHER_LENGTH_LIMIT = 256
 _NO_MATCHER = object()
 _HOST_FILES: dict[AgentName, tuple[str, ...]] = {
     "claude-code": (".claude/settings.json",),
@@ -170,23 +178,31 @@ def _hook_handlers(document: dict) -> dict[str, list[_HookHandler]] | None:
 
 
 def _matcher_covers(matcher: object, event: str, agent: AgentName) -> bool:
-    """Validate an owned group's matcher against the sources it must capture.
+    """Validate an owned group's matcher without evaluating a host regex.
 
-    A group without a matcher matches every source. Anything else must be a
-    string regex that still matches every Claude SessionStart source, so a
-    disabled or narrowed matcher can never masquerade as an installed hook.
+    A group without a matcher and the documented match-all forms match every
+    lifecycle identifier. Claude Code additionally accepts only literal
+    identifiers or pipe-separated alternations of the identifiers it documents
+    for that event, and the owned group must cover every one of them. Anything
+    else, including a syntactically plausible regular expression, is stale:
+    host-controlled patterns must never be compiled because an unverified
+    narrowing cannot prove capture and a pathologic pattern could hang home.
+    Codex has no documented lifecycle matcher identifiers, so only the
+    match-all forms are trusted there; setup never writes a Codex matcher.
     """
     if matcher is _NO_MATCHER:
         return True
     if not isinstance(matcher, str):
         return False
-    try:
-        pattern = re.compile(matcher)
-    except re.error:
-        return False
-    if agent != "claude-code" or event != "SessionStart":
+    if matcher in _MATCH_ALL_MATCHERS:
         return True
-    return all(pattern.search(source) is not None for source in _CLAUDE_SESSION_START_SOURCES)
+    if len(matcher) > _MATCHER_LENGTH_LIMIT or agent != "claude-code":
+        return False
+    known = _CLAUDE_MATCHER_VALUES[event]
+    tokens = [token.strip() for token in matcher.split("|")]
+    if not all(token in known for token in tokens):
+        return False
+    return set(tokens) >= set(known)
 
 
 def _owned_hook_command(
