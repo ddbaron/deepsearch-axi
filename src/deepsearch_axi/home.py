@@ -44,7 +44,7 @@ _HOST_FILES: dict[AgentName, tuple[str, ...]] = {
     "codex": (".codex/hooks.json", ".codex/config.toml"),
     "opencode": (".opencode/plugins/deepsearch-axi.js",),
 }
-_PLUGIN_TEMPLATE = "templates/opencode_plugin.js"
+_PLUGIN_TEMPLATE_PARTS = ("templates", "opencode_plugin.js")
 _PLUGIN_COMMAND = "__DEEPSEARCH_AXI_COMMAND__"
 _PLUGIN_PROJECT = "__DEEPSEARCH_AXI_PROJECT__"
 _PLUGIN_VERSION = "__DEEPSEARCH_AXI_VERSION__"
@@ -167,7 +167,7 @@ def _codex_config_intact(path: Path) -> bool:
 
 def _plugin_bytes(command: Sequence[str], root: Path) -> bytes | None:
     try:
-        template = importlib.resources.files("deepsearch_axi").joinpath(_PLUGIN_TEMPLATE)
+        template = importlib.resources.files("deepsearch_axi").joinpath(*_PLUGIN_TEMPLATE_PARTS)
         text = template.read_text(encoding="utf-8")
     except (OSError, ModuleNotFoundError):
         return None
