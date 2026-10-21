@@ -11,10 +11,12 @@ import http.client
 import json
 import socket
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
-from support.env import FAKE_KEY
+from support.cli import decode, run_cli
+from support.env import FAKE_KEY, isolated_env
 from support.stub_server import StubResponse, json_response
 
 from deepsearch_axi import transport
@@ -482,16 +484,19 @@ def test_unencodable_credential_fails_as_safe_failure(credential_value: str, stu
 
 
 @pytest.mark.parametrize(
-    "base_url",
-    ["https://" + "e" * 64 + ".invalid", "https://\ud800.invalid"],
-    ids=["long-label", "surrogate"],
+    ("base_url", "code"),
+    [
+        pytest.param("https://" + "e" * 64 + ".invalid", "transport_error", id="long-label"),
+        pytest.param("https://\ud800.invalid", "invalid_config", id="surrogate"),
+    ],
 )
 def test_invalid_hostname_fails_as_safe_failure(
-    base_url: str, monkeypatch: pytest.MonkeyPatch
+    base_url: str, code: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The session netguard answers socket.create_connection before the platform
     # IDNA encoder runs; mirror that encoder here and prove the UnicodeError is
-    # mapped while no socket is ever opened.
+    # mapped while no socket is ever opened. A validator-rejected surrogate
+    # origin is refused even earlier as invalid_config.
     def encode_then_block(address: tuple[str, int], *args: Any, **kwargs: Any) -> None:
         address[0].encode("idna")
         raise AssertionError("external network access is blocked")
@@ -501,7 +506,7 @@ def test_invalid_hostname_fails_as_safe_failure(
     with pytest.raises(DeepsearchError) as unsafe:
         transport.post_tool(base_url, "search", {"query": "q"}, _credential(), timeout_seconds=1)
 
-    _assert_safe_failure(unsafe.value.failure, "transport_error", None)
+    _assert_safe_failure(unsafe.value.failure, code, None)
     _assert_no_raw_exception(
         unsafe.value,
         ("label empty or too long", "Invalid character", "Unicode", "Traceback"),
@@ -610,7 +615,7 @@ def _without(item: dict[str, Any], *keys: str) -> dict[str, Any]:
     return {key: value for key, value in item.items() if key not in keys}
 
 
-def test_response_limits_and_schema(stub: Any) -> None:
+def test_response_limits_and_schema(stub: Any, tmp_path: Path) -> None:
     credential = _credential()
 
     prefix = b'{"pad":"'
@@ -728,6 +733,108 @@ def test_response_limits_and_schema(stub: Any) -> None:
     page = validate_fetch_response({"title": "Title", "content": "Body", "unknown": "x"})
     assert page == {"title": "Title", "content": "Body"}
     assert list(page) == ["title", "content"]
+
+    # --- AC-20: escaped lone surrogates never become a successful response ---
+    project = tmp_path / "project"
+    project.mkdir()
+
+    def run_with(body: bytes, args: list[str]) -> tuple[Any, Any]:
+        response_server = stub(lambda request, body=body: StubResponse(status=200, body=body))
+        run_env = isolated_env(
+            tmp_path / "cli-home",
+            DEEPSEEK_API_KEY=FAKE_KEY,
+            DEEPSEEK_BASE_URL=response_server.base_url,
+        )
+        return response_server, run_cli(args, env=run_env, cwd=project)
+
+    invalid_searches = [
+        ("selected-title-high", {"results": [_search_item(title="bad\ud800")]}),
+        ("selected-content-low", {"results": [_search_item(content="bad\udfff")]}),
+        ("unselected-date-high", {"results": [_search_item(date="bad\ud800")]}),
+        ("unknown-top-level", {"results": [_search_item()], "unknown": "bad\ud800"}),
+        (
+            "unknown-nested",
+            {"results": [_search_item()], "meta": {"deep": ["bad\udfff"]}},
+        ),
+        ("unknown-object-key", {"results": [_search_item()], "\ud800": "x"}),
+        ("nested-object-key", {"results": [_search_item()], "meta": {"\udfff": 1}}),
+    ]
+    for label, payload in invalid_searches:
+        body = json.dumps(payload).encode("ascii")
+        assert b"\\ud" in body, label
+        response_server, run = run_with(body, ["search", "unicode probe"])
+        assert run.code == 1, label
+        assert run.stderr == "", label
+        document = decode(run.stdout)
+        assert document["error"]["code"] == "invalid_response", label
+        # A successful repair would exit 0 and substitute U+FFFD; neither is
+        # acceptable for invalid API data.
+        assert "\ufffd" not in run.stdout, label
+        assert FAKE_KEY not in run.stdout + run.stderr, label
+        assert len(response_server.requests) == 1, label
+
+    invalid_pages = [
+        ("fetch-title-high", {"title": "bad\ud800", "content": "Body"}),
+        ("fetch-content-low", {"title": "Title", "content": "bad\udfff"}),
+        (
+            "fetch-unknown-nested",
+            {"title": "Title", "content": "Body", "meta": {"x": ["\ud800"]}},
+        ),
+        ("fetch-object-key", {"title": "Title", "content": "Body", "\ud800": "x"}),
+    ]
+    for label, payload in invalid_pages:
+        body = json.dumps(payload).encode("ascii")
+        response_server, run = run_with(body, ["fetch", "https://example.com/"])
+        assert run.code == 1, label
+        assert run.stderr == "", label
+        document = decode(run.stdout)
+        assert document["error"]["code"] == "invalid_response", label
+        assert "\ufffd" not in run.stdout, label
+        assert FAKE_KEY not in run.stdout + run.stderr, label
+        assert len(response_server.requests) == 1, label
+
+    valid_search = json.dumps(
+        {"results": [_search_item(title="🌍 earth", content="café ☕", snippet="🌍")]},
+        ensure_ascii=False,
+    ).encode("utf-8")
+    response_server, run = run_with(valid_search, ["search", "unicode probe", "--need-content"])
+    assert run.code == 0, run.stdout + run.stderr
+    document = decode(run.stdout)
+    assert document["results"][0]["title"] == "🌍 earth"
+    assert document["results"][0]["content"] == "café ☕"
+
+    # A valid escaped surrogate pair is one supplementary-plane scalar and is
+    # preserved rather than rejected.
+    escaped_pair = (
+        b'{"results":[{"title":"\\ud83c\\udf0d earth",'
+        b'"url":"https://example.com/","snippet":"\\ud83c\\udf0d",'
+        b'"summary":"s","content":"c","authority":1,"rerank_score":0.5}]}'
+    )
+    response_server, run = run_with(escaped_pair, ["search", "unicode probe"])
+    assert run.code == 0, run.stdout + run.stderr
+    assert decode(run.stdout)["results"][0]["title"] == "🌍 earth"
+
+    valid_page = json.dumps({"title": "🌍", "content": "Body 🌍\nline"}, ensure_ascii=False).encode(
+        "utf-8"
+    )
+    response_server, run = run_with(valid_page, ["fetch", "https://example.com/"])
+    assert run.code == 0, run.stdout + run.stderr
+    assert decode(run.stdout)["page"]["content"] == "Body 🌍\nline"
+
+    # --- AC-20: --full cannot bypass the 8 MiB response cap ---
+    oversized = _json_body_of_size(MAX_RESPONSE_BYTES + 1)
+    for args in (
+        ["search", "too large", "--full"],
+        ["fetch", "https://example.com/", "--full"],
+    ):
+        response_server, run = run_with(oversized, args)
+        assert run.code == 1, args
+        assert run.stderr == ""
+        document = decode(run.stdout)
+        assert document["error"]["code"] == "response_too_large", args
+        assert FAKE_KEY not in run.stdout + run.stderr
+        # Exactly one attempt: no retry and no second hop.
+        assert len(response_server.requests) == 1, args
 
 
 def test_search_body_key_order_and_optional_question() -> None:

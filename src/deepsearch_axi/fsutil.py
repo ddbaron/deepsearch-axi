@@ -122,23 +122,28 @@ def locked(lock_path: Path) -> Iterator[None]:
 
     The lock file must be a regular file and is opened with ``O_NOFOLLOW`` so
     a planted symlink can neither redirect the lock nor make us create a file
-    outside its directory.
+    outside its directory. Failure labels never include the absolute path:
+    the project prefix can itself be credential-bearing.
     """
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    label = lock_path.name or "lock file"
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        raise DeepsearchError(local_io(label)) from None
     try:
         existing = os.lstat(lock_path)
     except FileNotFoundError:
         pass
     except OSError:
-        raise DeepsearchError(local_io(str(lock_path))) from None
+        raise DeepsearchError(local_io(label)) from None
     else:
         if not stat.S_ISREG(existing.st_mode):
-            raise DeepsearchError(local_io(str(lock_path)))
+            raise DeepsearchError(local_io(label))
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(str(lock_path), flags, 0o600)
     except OSError:
-        raise DeepsearchError(local_io(str(lock_path))) from None
+        raise DeepsearchError(local_io(label)) from None
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
