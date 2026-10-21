@@ -17,6 +17,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
 from support.cli import decode, run_cli
 from support.env import FAKE_KEY, isolated_env
 
@@ -371,6 +372,91 @@ def test_agent_selection_only_touches_the_selected_host(tmp_path: Path, home_dir
     assert not (project / PLUGIN).exists()
     manifest = json.loads((project / MANIFEST).read_text(encoding="utf-8"))
     assert sorted(manifest["hosts"]) == ["claude-code", "codex"]
+
+
+@pytest.mark.parametrize(
+    "agent,relative",
+    [("claude-code", CLAUDE), ("codex", CODEX_HOOKS)],
+)
+@pytest.mark.parametrize("event", ["SessionStart", "SessionEnd"])
+@pytest.mark.parametrize("damage", ["narrowed-matcher", "wrong-handler-type"])
+def test_setup_repairs_damaged_owned_hook_metadata(
+    home_dir: Path,
+    project_dir: Path,
+    agent: str,
+    relative: Path,
+    event: str,
+    damage: str,
+) -> None:
+    executable = _fake_console(home_dir)
+    environment = _env(home_dir)
+    installed = _setup(executable, environment, project_dir, "--agent", agent)
+    assert installed.code == 0, (installed.stdout, installed.stderr)
+
+    config_path = project_dir / relative
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    groups = document["hooks"][event]
+    assert len(groups) == 1
+    if damage == "narrowed-matcher":
+        groups[0]["matcher"] = "never-a-session-source"
+    else:
+        groups[0]["hooks"][0]["type"] = "prompt"
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert _home(executable, environment, project_dir)["integrations"][agent] == "stale"
+
+    repaired = _setup(executable, environment, project_dir, "--agent", agent)
+    assert repaired.code == 0, (repaired.stdout, repaired.stderr)
+    assert repaired.stderr == ""
+    assert {row["agent"]: row["status"] for row in decode(repaired.stdout)["hosts"]} == {
+        agent: "repaired"
+    }
+
+    expected = _expected_command(
+        executable, agent, "start" if event == "SessionStart" else "end", project_dir
+    )
+    repaired_config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired_config["hooks"][event] == [
+        {"hooks": [{"type": "command", "command": expected}]}
+    ]
+    assert _home(executable, environment, project_dir)["integrations"][agent] == "installed"
+
+    stable = _snapshot(project_dir)
+    repeated = _setup(executable, environment, project_dir, "--agent", agent)
+    assert repeated.code == 0 and repeated.stdout == "" and repeated.stderr == ""
+    assert _snapshot(project_dir) == stable
+
+
+def test_moved_project_fails_and_manual_recovery_keeps_old_path_handlers(
+    tmp_path: Path, home_dir: Path, project_dir: Path
+) -> None:
+    executable = _fake_console(home_dir)
+    environment = _env(home_dir)
+    first = _setup(executable, environment, project_dir)
+    assert first.code == 0, (first.stdout, first.stderr)
+    old_root = str(project_dir.resolve())
+
+    moved = tmp_path / "moved-project"
+    shutil.move(str(project_dir), moved)
+    moved_environment = _env(home_dir)
+
+    refused = _setup(executable, moved_environment, moved)
+    assert refused.code == 1, (refused.stdout, refused.stderr)
+    assert decode(refused.stdout)["error"]["code"] == "invalid_config"
+    manifest = json.loads((moved / MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["project"] == old_root
+
+    # Manual recovery in the README: delete the stale manifest and rerun. The
+    # new handlers are installed, but the old-path handlers stay behind.
+    (moved / MANIFEST).unlink()
+    recovered = _setup(executable, moved_environment, moved)
+    assert recovered.code == 0, (recovered.stdout, recovered.stderr)
+    hooks = json.loads((moved / CLAUDE).read_text(encoding="utf-8"))
+    for event in ("SessionStart", "SessionEnd"):
+        commands = _owned_commands(hooks, event)
+        assert len(commands) == 2, (event, commands)
+        assert any(old_root in command for command in commands), event
+        assert any(str(moved.resolve()) in command for command in commands), event
 
 
 def _assert_untouched_failure(

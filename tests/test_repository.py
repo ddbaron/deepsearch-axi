@@ -224,8 +224,10 @@ def test_readme_documents_schemas_session_protocol_and_agent_setup() -> None:
     assert ".claude/settings.json" in README
     assert ".codex/hooks.json" in README
     assert ".opencode/plugins/deepsearch-axi.js" in README
-    assert "1.18.29" in README
-    assert "repairs owned start and end hooks" in README
+    assert ".deepsearch-axi/setup.lock" in README
+    assert "1.18.29" not in README
+    assert "Re-running setup after the executable moves repairs" in README
+    assert "Moving the project directory after setup is not supported" in README
 
     integration = _section("## Agent integration")
     assert "Hooks are the primary integration" in integration

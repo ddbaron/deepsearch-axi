@@ -11,6 +11,7 @@ loudly instead of reaching for the public network.
 
 from __future__ import annotations
 
+import json
 import os
 import pwd
 import re
@@ -455,5 +456,46 @@ def test_offline_installation_and_runs(
     assert blocked_document["error"]["code"] == "transport_error"
     assert FAKE_KEY not in blocked.stdout
     assert FAKE_KEY not in blocked.stderr
+
+    # Setup under the installed console script must record that exact
+    # executable (the installer's bin dir is not on PATH here) and the generated
+    # Claude Code start hook must execute it and report the cwd-scoped context.
+    setup_project = (tmp_path / "setup-project").resolve()
+    setup_project.mkdir()
+    setup_run = _run([executable, "setup", "--agent", "claude-code"], base_env, cwd=setup_project)
+    assert setup_run.returncode == 0, setup_run.stderr
+    assert setup_run.stderr == ""
+    setup_document = toon_format.decode(setup_run.stdout, strict=True)
+    assert setup_document["setup"] == {"project": str(setup_project), "changed": True}
+    manifest = json.loads(
+        (setup_project / ".deepsearch-axi" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["executable"] == str(executable)
+    assert manifest["command"] == [str(executable)]
+    settings_text = (setup_project / ".claude" / "settings.json").read_text(encoding="utf-8")
+    settings = json.loads(settings_text)
+    start = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert shlex.split(start)[0] == str(executable)
+    hook = subprocess.run(
+        shlex.split(start),
+        cwd=str(setup_project),
+        env=home_env,
+        input=json.dumps(
+            {
+                "session_id": f"installed-{installer}",
+                "cwd": str(setup_project),
+                "hook_event_name": "SessionStart",
+                "source": "startup",
+            }
+        ).encode("utf-8"),
+        capture_output=True,
+        timeout=120,
+    )
+    assert hook.returncode == 0, hook.stderr
+    assert hook.stderr == b""
+    hook_document = toon_format.decode(hook.stdout.decode("utf-8"), strict=True)
+    assert hook_document["cwd"] == str(setup_project)
+    assert hook_document["integration"] == "installed"
+    assert FAKE_KEY not in hook.stdout.decode("utf-8")
 
     assert _tool_dir_snapshot() == before, "installation wrote outside its temp homes"

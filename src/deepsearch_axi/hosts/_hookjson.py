@@ -93,25 +93,43 @@ def _handlers(group: object) -> list | None:
     return handlers if isinstance(handlers, list) else None
 
 
-def count_owned(document: JsonObject, event: str, is_owned: Callable[[str], bool]) -> list[str]:
-    """Return every owned handler command registered for ``event``."""
+def _canonical_registration(
+    document: JsonObject,
+    event: str,
+    desired_command: str,
+    is_owned: Callable[[str], bool],
+) -> bool:
+    """Return whether ``event`` already holds exactly one canonical handler.
+
+    A registration is canonical only when the single owned handler is a
+    ``command`` handler carrying the exact desired command and its enclosing
+    group is match-all (no matcher key).  Checking the command string alone
+    would silently accept a handler changed to another type or a group narrowed
+    to lifecycle sources that never fire.
+    """
     hooks = document.get("hooks")
     if not isinstance(hooks, dict):
-        return []
+        return False
     groups = hooks.get(event)
     if not isinstance(groups, list):
-        return []
-    found: list[str] = []
+        return False
+    owned = 0
+    canonical = False
     for group in groups:
         handlers = _handlers(group)
         if handlers is None:
             continue
+        match_all = isinstance(group, dict) and "matcher" not in group
         for handler in handlers:
-            if isinstance(handler, dict):
-                command = handler.get("command")
-                if isinstance(command, str) and is_owned(command):
-                    found.append(command)
-    return found
+            if not isinstance(handler, dict):
+                continue
+            command = handler.get("command")
+            if not isinstance(command, str) or not is_owned(command):
+                continue
+            owned += 1
+            if match_all and handler == {"type": "command", "command": desired_command}:
+                canonical = True
+    return owned == 1 and canonical
 
 
 def _validate_group(group: object, event: str, label: str) -> None:
@@ -145,8 +163,7 @@ def merge_hooks(
             hooks[event] = groups
         for group in groups:
             _validate_group(group, event, label)
-        owned = count_owned(document, event, is_owned)
-        if len(owned) == 1 and owned[0] == desired[event]:
+        if _canonical_registration(document, event, desired[event], is_owned):
             continue
         kept_groups: list = []
         for group in groups:
