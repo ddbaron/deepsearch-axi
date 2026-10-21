@@ -22,6 +22,8 @@ import pytest
 from support.cli import decode, run_cli
 from support.env import FAKE_KEY, isolated_env
 
+from deepsearch_axi.models import REDACTED
+
 MANIFEST = Path(".deepsearch-axi") / "manifest.json"
 CLAUDE = Path(".claude") / "settings.json"
 CODEX_HOOKS = Path(".codex") / "hooks.json"
@@ -43,6 +45,12 @@ def _fake_console(home: Path) -> Path:
 def _env(home: Path, **overrides: str) -> dict[str, str]:
     # Keep the fake console off PATH so setup records its absolute path.
     environment = isolated_env(home, DEEPSEEK_API_KEY=FAKE_KEY, **overrides)
+    environment["PATH"] = os.environ.get("PATH", "")
+    return environment
+
+
+def _env_without_key(home: Path) -> dict[str, str]:
+    environment = isolated_env(home)
     environment["PATH"] = os.environ.get("PATH", "")
     return environment
 
@@ -672,3 +680,78 @@ def test_setup_does_not_create_state_before_lifecycle_events(
     run = _setup(executable, environment, project_dir)
     assert run.code == 0, (run.stdout, run.stderr)
     assert not (project_dir / ".deepsearch-axi" / "state.json").exists()
+
+
+@pytest.mark.parametrize("source", ["env", "dotenv"])
+def test_setup_redacts_effective_key_reflected_in_success_path(
+    tmp_path: Path, home_dir: Path, source: str
+) -> None:
+    project = tmp_path / FAKE_KEY / "project"
+    project.mkdir(parents=True)
+    executable = _fake_console(home_dir)
+    if source == "env":
+        environment = _env(home_dir)
+    else:
+        (project / ".env").write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+        environment = _env_without_key(home_dir)
+
+    run = _setup(executable, environment, project)
+
+    assert run.code == 0, (run.stdout, run.stderr)
+    assert run.stderr == ""
+    document = decode(run.stdout)
+    expected = str(project.resolve()).replace(FAKE_KEY, REDACTED)
+    assert document["setup"]["project"] == expected
+    assert FAKE_KEY not in run.stdout
+    assert FAKE_KEY not in run.stderr
+
+
+@pytest.mark.parametrize("source", ["env", "dotenv"])
+def test_setup_redacts_effective_key_reflected_in_failure_path(
+    tmp_path: Path, home_dir: Path, source: str
+) -> None:
+    project = tmp_path / FAKE_KEY / "project"
+    project.mkdir(parents=True)
+    settings = project / CLAUDE
+    settings.mkdir(parents=True)
+    executable = _fake_console(home_dir)
+    if source == "env":
+        environment = _env(home_dir)
+    else:
+        (project / ".env").write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+        environment = _env_without_key(home_dir)
+
+    run = _setup(executable, environment, project)
+
+    assert run.code == 1, (run.stdout, run.stderr)
+    assert run.stderr == ""
+    document = decode(run.stdout)
+    assert document["error"]["code"] == "local_io"
+    expected = str(settings.resolve()).replace(FAKE_KEY, REDACTED)
+    assert expected in document["error"]["message"]
+    assert expected in document["help"][0]
+    assert FAKE_KEY not in run.stdout
+    assert FAKE_KEY not in run.stderr
+
+
+def test_setup_does_not_read_dotenv_when_environment_key_is_effective(
+    home_dir: Path, project_dir: Path
+) -> None:
+    executable = _fake_console(home_dir)
+    project_dotenv = project_dir / ".env"
+    project_dotenv.write_text("DEEPSEEK_API_KEY=sk-test-DOTENV-ignored-value\n", encoding="utf-8")
+    home_dotenv = home_dir / ".config" / "deepsearch-axi" / ".env"
+    home_dotenv.parent.mkdir(parents=True)
+    home_dotenv.write_text("DEEPSEEK_API_KEY=sk-test-HOME-ignored-value\n", encoding="utf-8")
+
+    run = run_cli(
+        ["setup"],
+        env=_env(home_dir),
+        cwd=project_dir,
+        executable=[str(executable)],
+        read_guard=[project_dotenv, home_dotenv],
+    )
+
+    assert run.code == 0, (run.stdout, run.stderr)
+    assert run.reads == ()
+    assert FAKE_KEY not in run.stdout + run.stderr

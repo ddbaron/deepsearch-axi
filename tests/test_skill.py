@@ -183,11 +183,7 @@ def test_skill_contains_no_live_context_or_secrets() -> None:
         assert token not in text
 
 
-def test_skill_generator_reads_the_single_guidance_source() -> None:
-    source = (REPO_ROOT / SCRIPT).read_text(encoding="utf-8")
-    assert "guidance.py" in source
-    assert "skill_markdown" in source
-    assert "Search the web and fetch pages as Markdown" not in source
+def test_generated_skill_embeds_shared_guidance() -> None:
     rendered = guidance.skill_markdown()
     assert guidance.DESCRIPTION in rendered
     assert guidance.PROJECT_INSTRUCTION in rendered

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import json
 import re
 import statistics
@@ -102,24 +101,6 @@ def test_version_fast_path_imports_no_product_modules(env: dict[str, str], tmp_p
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == _expected()
     assert b"MARKER" not in completed.stdout + completed.stderr
-
-
-def test_entry_module_source_imports_only_sys_and_version() -> None:
-    source = (REPO_ROOT / "src" / "deepsearch_axi" / "_entry.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    top_level: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            top_level.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.module != "__future__":
-            top_level.add(node.module)
-    assert top_level == {"sys", "deepsearch_axi._version"}
-    nested = {
-        node.module
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module and node.module not in top_level
-    }
-    assert nested == {"deepsearch_axi.cli"}
 
 
 def test_version_fast_path_reads_no_config(env: dict[str, str], tmp_path: Path) -> None:

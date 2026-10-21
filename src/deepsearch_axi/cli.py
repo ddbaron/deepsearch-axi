@@ -97,6 +97,7 @@ def main(
             )
             succeeded = True
         elif isinstance(command, SetupCommand):
+            remember(_redaction_secrets(environment, cwd_path, home_path))
             document = _setup(command, environment, cwd_path, home_path)
         elif isinstance(command, SessionCommand):
             payload = session.read_native_payload(_stdin(stdin))

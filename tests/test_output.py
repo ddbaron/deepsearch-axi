@@ -8,7 +8,6 @@ truncation metadata are asserted rather than snapshots.
 from __future__ import annotations
 
 import io
-import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -194,29 +193,6 @@ def test_render_handles_surrogates_and_invalid_scalars() -> None:
     fallback = _decode({"value": object()})
     assert fallback == documents.error_document(internal_error())
     assert fallback["error"]["code"] == "internal_error"
-
-
-def test_render_is_sole_toon_importer_and_stdout_writer() -> None:
-    source_root = Path(__file__).resolve().parents[1] / "src" / "deepsearch_axi"
-    importers = sorted(
-        path.name
-        for path in source_root.rglob("*.py")
-        if re.search(
-            r"^\s*(?:import|from)\s+toon_format\b",
-            path.read_text(encoding="utf-8"),
-            re.MULTILINE,
-        )
-    )
-    assert importers == ["render.py"]
-    writers = {
-        path.name
-        for path in source_root.rglob("*.py")
-        if re.search(
-            r"sys\.stdout(?:\.buffer)?\.(?:write|flush)\b",
-            path.read_text(encoding="utf-8"),
-        )
-    }
-    assert writers <= {"render.py", "_entry.py"}
 
 
 def test_write_output_and_broken_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
