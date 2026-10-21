@@ -220,7 +220,7 @@ def _manifest_ok(root: Path) -> bool:
         return False
     try:
         return load_manifest(Path(root)) is not None
-    except DeepsearchError:
+    except (DeepsearchError, RecursionError):
         return False
 
 

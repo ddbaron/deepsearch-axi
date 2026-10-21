@@ -9,9 +9,10 @@ command path with an audit hook proving no credential/config-file reads.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from support.cli import decode, run_cli
@@ -49,23 +50,28 @@ def _fake_console(home: Path) -> Path:
 def _hook_document(start: str, end: str) -> dict:
     return {
         "hooks": {
-            "SessionStart": [{"hooks": [{"type": "command", "command": start}]}],
-            "SessionEnd": [{"hooks": [{"type": "command", "command": end}]}],
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": start}]},
+                {"matcher": "startup", "hooks": [{"type": "command", "command": "echo unrelated"}]},
+            ],
+            "SessionEnd": [
+                {"hooks": [{"type": "command", "command": end}]},
+                {"hooks": [{"type": "command", "command": "echo unrelated"}]},
+            ],
         }
     }
 
 
-def _lifecycle_commands(executable: Path, project: Path, agent: str) -> tuple[str, str]:
-    prefix = [str(executable)]
+def _lifecycle_commands(prefix: Sequence[str], project: Path, agent: str) -> tuple[str, str]:
     root = str(project.resolve())
     start = shlex.join([*prefix, "session", "start", "--agent", agent, "--project", root])
     end = shlex.join([*prefix, "session", "end", "--agent", agent, "--project", root])
     return start, end
 
 
-def _plugin_text(executable: Path, project: Path) -> str:
+def _plugin_text(prefix: Sequence[str], project: Path) -> str:
     text = PLUGIN_TEMPLATE.read_text(encoding="utf-8")
-    text = text.replace("__DEEPSEARCH_AXI_COMMAND__", json.dumps([str(executable)]))
+    text = text.replace("__DEEPSEARCH_AXI_COMMAND__", json.dumps(list(prefix)))
     text = text.replace("__DEEPSEARCH_AXI_PROJECT__", json.dumps(str(project.resolve())))
     return text.replace("__DEEPSEARCH_AXI_VERSION__", json.dumps(VERSION))
 
@@ -75,25 +81,27 @@ def _write_manifest(
     executable: Path,
     *,
     recorded_executable: str | None = None,
+    command: Sequence[str] | None = None,
 ) -> Manifest:
+    prefix = [str(executable)] if command is None else list(command)
     hosts = {
         "claude-code": ManifestHost(
             files=(".claude/settings.json",),
-            commands=_lifecycle_commands(executable, project, "claude-code"),
+            commands=_lifecycle_commands(prefix, project, "claude-code"),
         ),
         "codex": ManifestHost(
             files=(".codex/hooks.json", ".codex/config.toml"),
-            commands=_lifecycle_commands(executable, project, "codex"),
+            commands=_lifecycle_commands(prefix, project, "codex"),
         ),
         "opencode": ManifestHost(
             files=(".opencode/plugins/deepsearch-axi.js",),
-            commands=(json.dumps([str(executable)]),),
+            commands=(json.dumps(prefix),),
         ),
     }
     manifest = Manifest(
         project=str(project.resolve()),
         executable=recorded_executable or str(executable),
-        command=(str(executable),),
+        command=tuple(prefix),
         hosts=hosts,
     )
     owned = project / ".deepsearch-axi"
@@ -102,11 +110,18 @@ def _write_manifest(
     return manifest
 
 
-def _write_setup(project: Path, executable: Path, *, corrupt: str | None = None) -> None:
+def _write_setup(
+    project: Path,
+    executable: Path,
+    *,
+    corrupt: str | None = None,
+    prefix: Sequence[str] | None = None,
+) -> None:
     """Write a native integration fixture, optionally corrupting one surface."""
     project.mkdir(parents=True, exist_ok=True)
-    claude_commands = _lifecycle_commands(executable, project, "claude-code")
-    codex_commands = _lifecycle_commands(executable, project, "codex")
+    command_prefix = [str(executable)] if prefix is None else list(prefix)
+    claude_commands = _lifecycle_commands(command_prefix, project, "claude-code")
+    codex_commands = _lifecycle_commands(command_prefix, project, "codex")
 
     claude_path = project / ".claude" / "settings.json"
     claude_path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,16 +130,46 @@ def _write_setup(project: Path, executable: Path, *, corrupt: str | None = None)
         del claude_document["hooks"]["SessionEnd"]
     elif corrupt == "claude-altered":
         claude_document["hooks"]["SessionEnd"][0]["hooks"][0]["command"] += " --debug"
+    elif corrupt == "claude-duplicate":
+        claude_document["hooks"]["SessionStart"].append(
+            {"hooks": [{"type": "command", "command": claude_commands[0]}]}
+        )
+    elif corrupt == "claude-outdated":
+        outdated = shlex.join(
+            [
+                "/opt/old/deepsearch-axi",
+                "session",
+                "end",
+                "--agent",
+                "claude-code",
+                "--project",
+                str(project.resolve()),
+            ]
+        )
+        claude_document["hooks"]["SessionEnd"].append(
+            {"hooks": [{"type": "command", "command": outdated}]}
+        )
+    elif corrupt == "claude-prompt":
+        claude_document["hooks"]["SessionStart"][0]["hooks"][0]["type"] = "prompt"
+    elif corrupt == "claude-disable-all":
+        claude_document["disableAllHooks"] = True
     claude_path.write_text(json.dumps(claude_document, indent=2) + "\n", encoding="utf-8")
 
     codex_path = project / ".codex" / "hooks.json"
     codex_path.parent.mkdir(parents=True, exist_ok=True)
+    codex_document = _hook_document(*codex_commands)
+    if corrupt == "codex-missing":
+        del codex_document["hooks"]["SessionEnd"]
+    elif corrupt == "codex-altered":
+        codex_document["hooks"]["SessionEnd"][0]["hooks"][0]["command"] += " --debug"
+    elif corrupt == "codex-duplicate":
+        codex_document["hooks"]["SessionStart"].append(
+            {"hooks": [{"type": "command", "command": codex_commands[0]}]}
+        )
     if corrupt == "codex-json":
         codex_path.write_text("{not valid json\n", encoding="utf-8")
     else:
-        codex_path.write_text(
-            json.dumps(_hook_document(*codex_commands), indent=2) + "\n", encoding="utf-8"
-        )
+        codex_path.write_text(json.dumps(codex_document, indent=2) + "\n", encoding="utf-8")
 
     config_path = project / ".codex" / "config.toml"
     if corrupt == "codex-features":
@@ -134,16 +179,17 @@ def _write_setup(project: Path, executable: Path, *, corrupt: str | None = None)
 
     plugin_path = project / ".opencode" / "plugins" / "deepsearch-axi.js"
     plugin_path.parent.mkdir(parents=True, exist_ok=True)
-    plugin = _plugin_text(executable, project)
+    plugin = _plugin_text(command_prefix, project)
     if corrupt == "plugin-unmanaged":
         plugin = "// local hand-written plugin\n" + plugin.split("\n", 1)[1]
     elif corrupt == "plugin-mismatch":
-        plugin = plugin.replace(json.dumps([str(executable)]), '["other-command"]', 1)
+        plugin = plugin.replace(json.dumps(command_prefix), '["other-command"]', 1)
     plugin_path.write_text(plugin, encoding="utf-8")
 
     _write_manifest(
         project,
         executable,
+        command=command_prefix,
         recorded_executable=(
             "/nonexistent/deepsearch-axi" if corrupt == "stale-executable" else None
         ),
@@ -263,6 +309,9 @@ def test_home_readiness(
     # Installed integrations: live files must back every manifest record.
     installed_project = tmp_path / "installed"
     _write_setup(installed_project, executable)
+    # The byte budgets below are only meaningful for the standard bounded-path
+    # fixture, so the fixture's own path length is asserted explicitly.
+    assert len(str(installed_project.resolve())) <= 160
     installed_run, installed = _home(
         dict(base_env, DEEPSEEK_API_KEY=FAKE_KEY), installed_project, executable
     )
@@ -280,9 +329,16 @@ def test_home_readiness(
     stale_cases = (
         ("codex-json", "codex"),
         ("codex-features", "codex"),
+        ("codex-missing", "codex"),
+        ("codex-altered", "codex"),
+        ("codex-duplicate", "codex"),
         ("claude-missing", "claude-code"),
         ("claude-altered", "claude-code"),
         ("claude-missing-file", "claude-code"),
+        ("claude-duplicate", "claude-code"),
+        ("claude-outdated", "claude-code"),
+        ("claude-prompt", "claude-code"),
+        ("claude-disable-all", "claude-code"),
         ("plugin-unmanaged", "opencode"),
         ("plugin-mismatch", "opencode"),
     )
@@ -368,6 +424,192 @@ def test_home_readiness(
     assert after_session["prior"] == {"agent": "codex", "event": "start", "sessions": 2}
     assert len(after_session_run.stdout) <= 1800
     assert server.requests == []
+
+
+def test_home_rechecks_manifest_command(
+    env: dict[str, str], home_dir: Path, tmp_path: Path
+) -> None:
+    """A recorded command prefix must resolve to the live console script.
+
+    The manifest owns the hook and plugin command strings, so it cannot vouch
+    for itself: the effective prefix is re-resolved through the filesystem or
+    PATH and compared with the running executable by file identity.
+    """
+    executable = _fake_console(home_dir)
+    base_env = dict(env, DEEPSEEK_API_KEY=FAKE_KEY)
+
+    missing_project = tmp_path / "command-missing"
+    _write_setup(missing_project, executable, prefix=("/nonexistent/deepsearch-axi",))
+    _, missing = _home(base_env, missing_project, executable)
+    assert missing["integrations"] == {
+        "claude-code": "stale",
+        "codex": "stale",
+        "opencode": "stale",
+    }
+
+    bare_project = tmp_path / "command-bare"
+    _write_setup(bare_project, executable, prefix=("deepsearch-axi",))
+    _, absent = _home(base_env, bare_project, executable)
+    assert absent["integrations"] == {
+        "claude-code": "stale",
+        "codex": "stale",
+        "opencode": "stale",
+    }
+
+    # The same bare prefix is trustworthy only when PATH really resolves it to
+    # the running console script.
+    path_dir = tmp_path / "pathbin"
+    path_dir.mkdir()
+    os.symlink(executable, path_dir / "deepsearch-axi")
+    on_path = dict(
+        base_env,
+        PATH=os.pathsep.join((str(path_dir), env.get("PATH", ""))),
+    )
+    _, present = _home(on_path, bare_project, executable)
+    assert present["integrations"] == {
+        "claude-code": "installed",
+        "codex": "installed",
+        "opencode": "installed",
+    }
+
+
+def _malformed_home_run(
+    env: dict[str, str],
+    project: Path,
+    executable: Path,
+    *,
+    manifest: bytes | None = None,
+    state: bytes | None = None,
+) -> tuple[int, str, str]:
+    """Run home over a project whose owned records are arbitrary bytes."""
+    owned = project / ".deepsearch-axi"
+    owned.mkdir(parents=True, exist_ok=True)
+    if manifest is not None:
+        (owned / "manifest.json").write_bytes(manifest)
+    if state is not None:
+        (owned / "state.json").write_bytes(state)
+    run = run_cli([], env=env, cwd=project, executable=[str(executable)])
+    return run.code, run.stdout, run.stderr
+
+
+_MALFORMED_MANIFESTS: tuple[bytes, ...] = (
+    b"[]",
+    b'{"hosts": []}',
+    b'{"hosts": {"codex": 5}}',
+    b'{"hosts": {"codex": {"files": "abc", "commands": "zz"}}}',
+    b'{"project": null, "executable": null, "command": 7, "hosts": {"codex": {"files": [1]}}}',
+    b'{"hosts": {"opencode": {"files": [".opencode/plugins/deepsearch-axi.js"], "commands": {}}}}',
+    b"\xff\xfe{",
+    b'{"hosts": ',
+)
+
+_MALFORMED_STATES: tuple[bytes, ...] = (
+    b"[1]",
+    b'{"schema": 1, "seq": 1, "sessions": 5, "scopes": {}}',
+    b'{"schema": 1, "seq": 1, "sessions": [], "scopes": [1, 2]}',
+    b'{"schema": 1, "seq": 1, "sessions": [], "scopes": {".": {"search_ok": "x"}}}',
+    b'{"schema": 1, "seq": 1, "sessions": [null, 3], "scopes": {}}',
+    b"\xff\xfe{",
+)
+
+
+def _valid_manifest_bytes(project: Path, executable: Path) -> bytes:
+    return manifest_bytes(
+        Manifest(
+            project=str(project.resolve()),
+            executable=str(executable),
+            command=(str(executable),),
+            hosts={},
+        )
+    )
+
+
+def test_home_contains_malformed_records(
+    env: dict[str, str], home_dir: Path, tmp_path: Path
+) -> None:
+    """Any malformed owned record degrades to a readable home view, never a failure."""
+    executable = _fake_console(home_dir)
+    # Manifest cases replace the manifest outright; state cases keep a valid
+    # manifest bound to their own project so the state file is really read.
+    cases: list[tuple[str, bytes | None, bytes | None]] = [
+        (f"manifest-{index}", raw, None) for index, raw in enumerate(_MALFORMED_MANIFESTS)
+    ]
+    for index, raw in enumerate(_MALFORMED_STATES):
+        cases.append((f"state-{index}", None, raw))
+    for label, manifest, state in cases:
+        project = tmp_path / label
+        project.mkdir()
+        if manifest is None:
+            manifest = _valid_manifest_bytes(project, executable)
+        code, stdout, stderr = _malformed_home_run(
+            dict(env, DEEPSEEK_API_KEY=FAKE_KEY),
+            project,
+            executable,
+            manifest=manifest,
+            state=state,
+        )
+        assert code == 0, (label, stdout, stderr)
+        assert stderr == ""
+        document = decode(stdout)
+        assert document["bin"] == "~/bin/deepsearch-axi", label
+        assert "integrations" in document, label
+        assert FAKE_KEY not in stdout, label
+
+
+def test_home_contains_deeply_nested_records(
+    stub: Callable[..., StubServer],
+    env: dict[str, str],
+    home_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """A recursion-exhausting owned record must not turn any command into a crash.
+
+    Home is documented to always succeed. Deep nesting raises RecursionError
+    while the manifest is validated during state-root discovery, which the home
+    probe and the post-request research counter must both contain.
+    """
+    server = stub(lambda request: json_response({"results": []}))
+    executable = _fake_console(home_dir)
+    deep = b"[" * 100_000
+
+    deep_manifest_project = tmp_path / "deep-manifest"
+    deep_manifest_project.mkdir()
+    code, stdout, stderr = _malformed_home_run(
+        dict(env, DEEPSEEK_API_KEY=FAKE_KEY),
+        deep_manifest_project,
+        executable,
+        manifest=deep,
+    )
+    assert code == 0, ("deep-manifest", stdout[:200], stderr)
+    assert "internal_error" not in stdout, "deep-manifest"
+
+    # The research counter runs in a finally block after a billable request;
+    # a hostile record must never leak a traceback or change the result.
+    search = run_cli(
+        ["search", "nested"],
+        env=dict(
+            env,
+            DEEPSEEK_API_KEY=FAKE_KEY,
+            DEEPSEEK_BASE_URL=server.base_url,
+        ),
+        cwd=deep_manifest_project,
+        executable=[str(executable)],
+    )
+    assert search.code == 0, (search.stdout[:200], search.stderr)
+    assert search.stderr == ""
+    assert "Traceback" not in search.stderr
+
+    deep_state_project = tmp_path / "deep-state"
+    deep_state_project.mkdir()
+    code, stdout, stderr = _malformed_home_run(
+        dict(env, DEEPSEEK_API_KEY=FAKE_KEY),
+        deep_state_project,
+        executable,
+        manifest=_valid_manifest_bytes(deep_state_project, executable),
+        state=deep,
+    )
+    assert code == 0, ("deep-state", stdout[:200], stderr)
+    assert "internal_error" not in stdout, "deep-state"
 
 
 _HELP_CASES: tuple[tuple[list[str], str, str, tuple[str, ...]], ...] = (

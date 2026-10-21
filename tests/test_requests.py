@@ -153,6 +153,10 @@ _QUERY_CASES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("--", "-site:example.com tokio"), "-site:example.com tokio"),
     (("a",), "a"),
     (("q" * 128,), "q" * 128),
+    # 128 code points is the boundary whether they are astral emoji (512 UTF-8
+    # bytes) or base-plus-combining pairs (two code points per visible character).
+    (("🙂" * 128,), "🙂" * 128),
+    (("e\u0301" * 64,), "e\u0301" * 64),
 )
 
 
@@ -186,6 +190,10 @@ _INVALID_SEARCH_CASES: tuple[tuple[list[str], str], ...] = (
     (["search", "q", "--count", "-1"], "missing value for --count"),
     (["search", "q", "--ori-question", ""], "invalid value for --ori-question"),
     (["search", "q", "--ori-question", "x" * 129], "invalid value for --ori-question"),
+    # Length is counted in code points, not UTF-8 bytes or combined graphemes.
+    (["search", "🙂" * 129], "invalid value for <query>"),
+    (["search", "e\u0301" * 128], "invalid value for <query>"),
+    (["search", "q", "--ori-question", "🙂" * 129], "invalid value for --ori-question"),
     (["search", "q", "--localization", "not-an-ip"], "invalid value for --localization"),
     (["search", "q", "--localization", "999.999.999.999"], "invalid value for --localization"),
     (["search", "q", "--localization", "localhost"], "invalid value for --localization"),
@@ -202,9 +210,12 @@ _VALID_SEARCH_CASES: tuple[tuple[list[str], dict[str, object]], ...] = (
     (["search", "q"], {"localization": ""}),
     (["search", "q", "--localization", "192.0.2.44"], {"localization": "192.0.2.44"}),
     (["search", "q", "--localization", "2001:db8::5"], {"localization": "2001:db8::5"}),
+    # A zone-scoped literal is still an IPv6 address; the value is not rewritten.
+    (["search", "q", "--localization", "fe80::1%eth0"], {"localization": "fe80::1%eth0"}),
     (["search", "q", "--ori-question", "x"], {"ori_question": "x"}),
     (["search", "q", "--ori-question", "x" * 128], {"ori_question": "x" * 128}),
     (["search", "q", "--ori-question", "   "], {"ori_question": "   "}),
+    (["search", "q", "--ori-question", "🙂" * 128], {"ori_question": "🙂" * 128}),
 )
 
 
@@ -270,6 +281,8 @@ _INVALID_FETCH_CASES: tuple[str, ...] = (
     "https://example.com/\x01control",
     "https://example.com/line\nbreak",
     "https://example.com/" + "a" * 8183,
+    # Exactly one character over the 8192-character limit.
+    "https://example.com/" + "a" * (8193 - len("https://example.com/")),
 )
 
 
@@ -281,6 +294,9 @@ def test_fetch_contract(
     environment = _search_env(env, api_server)
     boundary = "https://example.com/" + "a" * (8192 - len("https://example.com/"))
     assert len(boundary) == 8192
+    # 8192 code points but roughly 32 KiB of UTF-8: the limit counts characters.
+    emoji_boundary = "https://example.com/" + "🙂" * (8192 - len("https://example.com/"))
+    assert len(emoji_boundary) == 8192
     target_url = target_server.base_url + "/page?x=1&y=2#fragment"
     valid_urls = (
         "https://example.com/article",
@@ -289,6 +305,7 @@ def test_fetch_contract(
         "http://127.0.0.1:8080/path/%E2%9C%93",
         target_url,
         boundary,
+        emoji_boundary,
     )
     for url in valid_urls:
         before = len(api_server.requests)

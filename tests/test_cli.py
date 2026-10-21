@@ -8,6 +8,7 @@ proves the read instrumentation actually observes credential reads.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -62,6 +63,7 @@ _USAGE_CASES: tuple[tuple[list[str], str, str], ...] = (
     (["search", "q", "--full", "--full"], "search", "repeated flag --full"),
     (["fetch", "https://example.com/", "--json"], "fetch", "unknown flag --json"),
     (["search", "q", "--cou", "2"], "search", "unknown flag --cou"),
+    (["search", "q", "--need"], "search", "unknown flag --need"),
     (["fetch", "https://example.com/", "--ful"], "fetch", "unknown flag --ful"),
     (
         ["session", "start", "--ag", "codex", "--project", "/tmp"],
@@ -73,6 +75,11 @@ _USAGE_CASES: tuple[tuple[list[str], str, str], ...] = (
         ["search", "q", "--fields", "title", "--fields", "url"],
         "search",
         "repeated flag --fields",
+    ),
+    (
+        ["search", "q", "--localization", "127.0.0.1", "--localization", "127.0.0.1"],
+        "search",
+        "repeated flag --localization",
     ),
     (["search", "q", "--count"], "search", "missing value for --count"),
     (["search", "q", "--ori-question"], "search", "missing value for --ori-question"),
@@ -152,6 +159,20 @@ def test_usage_and_no_prompts(
     assert cwd_dotenv.resolve() in control.reads
     assert home_dotenv.resolve() not in control.reads
 
+    # Second control: with no cwd dotenv the user-level dotenv is the source
+    # that is read, so the "absent" assertions for HOME are not vacuous. The
+    # audit records attempted opens, so the missing cwd file may still appear.
+    cwd_dotenv.unlink()
+    home_control = run_cli(
+        ["search", "home instrumentation control"],
+        env=environment,
+        cwd=project_dir,
+        read_guard=watched,
+    )
+    assert home_control.code == 0, home_control.stderr
+    assert home_dotenv.resolve() in home_control.reads
+    cwd_dotenv.write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+
     for args, label, fragment in _USAGE_CASES:
         before = len(server.requests)
         run = run_cli(args, env=environment, cwd=project_dir, read_guard=watched)
@@ -194,6 +215,31 @@ def test_usage_and_no_prompts(
             env=environment,
             cwd=project_dir,
             stdin=b"",
+            timeout=20,
+            read_guard=watched,
+        )
+        assert run.code == expected_code, (args, run.stdout, run.stderr)
+        assert run.stderr == ""
+        assert decode(run.stdout)
+        assert run.reads == ()
+        lowered = (run.stdout + run.stderr).lower()
+        for prompt in ("continue?", "password", "press enter", "input()"):
+            assert prompt not in lowered
+
+    # File descriptor 0 closed entirely (not merely EOF): the shell closes it
+    # before exec'ing the interpreter, so any prompt would fail or hang here.
+    closed_stdin_wrapper = ["/bin/sh", "-c", 'exec 0<&-; exec "$0" "$@"', sys.executable]
+    closed_cases: tuple[tuple[list[str], int], ...] = (
+        (["-m", "deepsearch_axi", "search", "--help"], 0),
+        (["-m", "deepsearch_axi", "search"], 2),
+        (["-m", "deepsearch_axi", "session", "start", "--help"], 0),
+    )
+    for args, expected_code in closed_cases:
+        run = run_cli(
+            args,
+            env=environment,
+            cwd=project_dir,
+            executable=closed_stdin_wrapper,
             timeout=20,
             read_guard=watched,
         )

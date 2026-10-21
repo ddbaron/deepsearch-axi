@@ -19,6 +19,7 @@ import importlib.resources
 import json
 import os
 import shlex
+import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -77,6 +78,27 @@ def _same_executable(recorded: str, executable: Path) -> bool:
         return False
 
 
+def _command_is_live(command: Sequence[str], executable: Path, env: Mapping[str, str]) -> bool:
+    """Prove the manifest's command prefix resolves to the running console script.
+
+    Setup records exactly one prefix token: either the absolute console-script
+    path or the bare ``deepsearch-axi`` name that PATH resolves to that file.
+    """
+    if len(command) != 1:
+        return False
+    token = command[0]
+    if not isinstance(token, str) or not token:
+        return False
+    has_separator = os.sep in token or (os.altsep is not None and os.altsep in token)
+    if has_separator or os.path.isabs(token):
+        candidate: str | None = token
+    else:
+        candidate = shutil.which(token, path=env.get("PATH", os.defpath))
+    if candidate is None:
+        return False
+    return _same_executable(candidate, executable)
+
+
 def _inside_root(root: Path, relative: str) -> Path | None:
     """Resolve a manifest-owned relative path, rejecting escapes and symlinks."""
     path = Path(relative)
@@ -104,28 +126,58 @@ def _read_json_object(path: Path) -> dict | None:
     return document if isinstance(document, dict) else None
 
 
-def _hook_commands(document: dict) -> dict[str, set[str]] | None:
-    """Extract command strings from a native Claude/Codex hooks document."""
+def _hook_handlers(document: dict) -> dict[str, list[tuple[object, str]]] | None:
+    """Extract every native handler as ``(type, command)``, preserving duplicates."""
     hooks = document.get("hooks")
     if not isinstance(hooks, dict):
         return None
-    commands: dict[str, set[str]] = {}
+    handlers: dict[str, list[tuple[object, str]]] = {}
     for event in _HOOK_EVENTS:
         groups = hooks.get(event)
         if not isinstance(groups, list):
             return None
-        found: set[str] = set()
+        found: list[tuple[object, str]] = []
         for group in groups:
             if not isinstance(group, dict):
                 continue
-            handlers = group.get("hooks")
-            if not isinstance(handlers, list):
+            native = group.get("hooks")
+            if not isinstance(native, list):
                 continue
-            for handler in handlers:
-                if isinstance(handler, dict) and isinstance(handler.get("command"), str):
-                    found.add(handler["command"])
-        commands[event] = found
-    return commands
+            for handler in native:
+                if not isinstance(handler, dict):
+                    continue
+                command = handler.get("command")
+                if isinstance(command, str):
+                    found.append((handler.get("type"), command))
+        handlers[event] = found
+    return handlers
+
+
+def _owned_hook_command(
+    command: str,
+    *,
+    agent: AgentName,
+    project: str,
+    recorded: Sequence[str],
+    expected: Mapping[str, str],
+) -> bool:
+    """Return whether a handler command belongs to this project's integration."""
+    if command in recorded or command in expected.values():
+        return True
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return False
+    return (
+        len(argv) == 7
+        and Path(argv[0]).name == "deepsearch-axi"
+        and argv[1] == "session"
+        and argv[2] in ("start", "end")
+        and argv[3] == "--agent"
+        and argv[4] == agent
+        and argv[5] == "--project"
+        and argv[6] == project
+    )
 
 
 def _expected_commands(manifest: Manifest, agent: AgentName) -> dict[str, str]:
@@ -138,14 +190,46 @@ def _expected_commands(manifest: Manifest, agent: AgentName) -> dict[str, str]:
     }
 
 
-def _hooks_intact(path: Path, expected: dict[str, str]) -> bool:
+def _hooks_intact(
+    path: Path,
+    expected: dict[str, str],
+    *,
+    agent: AgentName,
+    project: str,
+    recorded: Sequence[str],
+    claude: bool,
+) -> bool:
+    """Require exactly one current, native command handler per lifecycle event.
+
+    Duplicate or outdated owned registrations make the host stale; unrelated
+    hooks (including non-dict entries) are preserved and never counted.
+    """
     document = _read_json_object(path)
     if document is None:
         return False
-    commands = _hook_commands(document)
-    if commands is None:
+    if claude and document.get("disableAllHooks") is True:
         return False
-    return all(expected[event] in commands[event] for event in _HOOK_EVENTS)
+    handlers = _hook_handlers(document)
+    if handlers is None:
+        return False
+    for event in _HOOK_EVENTS:
+        owned = [
+            (kind, command)
+            for kind, command in handlers[event]
+            if _owned_hook_command(
+                command,
+                agent=agent,
+                project=project,
+                recorded=recorded,
+                expected=expected,
+            )
+        ]
+        if len(owned) != 1:
+            return False
+        kind, command = owned[0]
+        if kind != "command" or command != expected[event]:
+            return False
+    return True
 
 
 def _codex_config_intact(path: Path) -> bool:
@@ -193,8 +277,13 @@ def _host_state(
     manifest: Manifest,
     host: ManifestHost,
     executable: Path,
+    env: Mapping[str, str],
 ) -> IntegrationState:
     if not _same_executable(manifest.executable, executable):
+        return "stale"
+    # The manifest's command prefix is not evidence on its own: it must resolve
+    # to the live console script before it can vouch for hook or plugin bytes.
+    if not _command_is_live(manifest.command, executable, env):
         return "stale"
     for relative in host.files:
         if _inside_root(root, relative) is None:
@@ -207,11 +296,29 @@ def _host_state(
     if agent == "claude-code":
         if tuple(host.commands) != (expected["SessionStart"], expected["SessionEnd"]):
             return "stale"
-        return "installed" if _hooks_intact(files[0], expected) else "stale"
+        return (
+            "installed"
+            if _hooks_intact(
+                files[0],
+                expected,
+                agent=agent,
+                project=manifest.project,
+                recorded=host.commands,
+                claude=True,
+            )
+            else "stale"
+        )
     if agent == "codex":
         if tuple(host.commands) != (expected["SessionStart"], expected["SessionEnd"]):
             return "stale"
-        if not _hooks_intact(files[0], expected):
+        if not _hooks_intact(
+            files[0],
+            expected,
+            agent=agent,
+            project=manifest.project,
+            recorded=host.commands,
+            claude=False,
+        ):
             return "stale"
         return "installed" if _codex_config_intact(files[1]) else "stale"
     if tuple(host.commands) not in {
@@ -223,7 +330,7 @@ def _host_state(
 
 
 def _manifest_states(
-    root: Path | None, executable: Path | None
+    root: Path | None, executable: Path | None, env: Mapping[str, str]
 ) -> tuple[tuple[AgentName, IntegrationState], ...]:
     """Inspect live integration readiness without writing anything."""
     states: dict[AgentName, IntegrationState] = {agent: "missing" for agent in AGENTS}
@@ -245,7 +352,7 @@ def _manifest_states(
             states[agent] = "stale"
             continue
         try:
-            states[agent] = _host_state(root, agent, manifest, host, executable)
+            states[agent] = _host_state(root, agent, manifest, host, executable, env)
         except Exception:
             # A malformed or unreadable host record can never break readiness.
             states[agent] = "stale"
@@ -283,15 +390,17 @@ def gather_local_context(
 
     try:
         state_root = find_state_root(cwd_path, home_path, secrets=secrets)
-    except (DeepsearchError, OSError, ValueError):
+    except (DeepsearchError, OSError, RecursionError, ValueError):
         state_root = None
-    integrations = _manifest_states(state_root.root if state_root is not None else None, executable)
+    integrations = _manifest_states(
+        state_root.root if state_root is not None else None, executable, env
+    )
     prior = None
     activity = None
     if state_root is not None:
         try:
             prior, activity = read_view(state_root.root, state_root.scope)
-        except (DeepsearchError, OSError):
+        except (DeepsearchError, OSError, RecursionError):
             prior, activity = None, None
 
     display_executable = executable if executable is not None else Path(sys.executable)
