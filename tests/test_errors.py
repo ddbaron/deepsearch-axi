@@ -837,6 +837,48 @@ def test_response_limits_and_schema(stub: Any, tmp_path: Path) -> None:
         assert len(response_server.requests) == 1, args
 
 
+def test_full_flag_does_not_bypass_schema_checks(stub: Any, tmp_path: Path) -> None:
+    # --full changes what is rendered, never what is accepted: a 200 body with a
+    # lone surrogate or a missing required field fails as invalid_response.
+    project = tmp_path / "project"
+    project.mkdir()
+    invalid_bodies = [
+        (
+            "search-lone-surrogate",
+            ["search", "full probe", "--full"],
+            json.dumps({"results": [_search_item(title="bad\ud800")]}).encode("ascii"),
+        ),
+        (
+            "search-missing-field",
+            ["search", "full probe", "--full"],
+            json.dumps({"results": [_without(_search_item(), "rerank_score")]}).encode("ascii"),
+        ),
+        (
+            "fetch-lone-surrogate",
+            ["fetch", "https://example.com/", "--full"],
+            json.dumps({"title": "Title", "content": "bad\udfff"}).encode("ascii"),
+        ),
+        (
+            "fetch-missing-content",
+            ["fetch", "https://example.com/", "--full"],
+            json.dumps({"title": "Title"}).encode("ascii"),
+        ),
+    ]
+    for label, args, body in invalid_bodies:
+        response_server = stub(lambda request, body=body: StubResponse(status=200, body=body))
+        run_env = isolated_env(
+            tmp_path / "cli-home",
+            DEEPSEEK_API_KEY=FAKE_KEY,
+            DEEPSEEK_BASE_URL=response_server.base_url,
+        )
+        run = run_cli(args, env=run_env, cwd=project)
+        assert run.code == 1, label
+        assert run.stderr == "", label
+        assert decode(run.stdout)["error"]["code"] == "invalid_response", label
+        assert "\ufffd" not in run.stdout, label
+        assert len(response_server.requests) == 1, label
+
+
 def test_search_body_key_order_and_optional_question() -> None:
     body = transport.build_search_body(
         SearchOptions(query="q", count=3, need_content=True, localization="1.2.3.4")

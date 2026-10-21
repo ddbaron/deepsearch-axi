@@ -8,6 +8,7 @@ and setup transactions separately.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import pty
@@ -19,6 +20,7 @@ from support.cli import decode, run_cli
 from support.env import FAKE_KEY, isolated_env
 from support.stub_server import json_response
 
+from deepsearch_axi.cli import main
 from deepsearch_axi.manifest import Manifest, manifest_bytes
 from deepsearch_axi.state import STATE_RELATIVE, session_hash
 
@@ -251,3 +253,97 @@ def test_payload_scope_privacy_and_idempotence(tmp_path: Path, home_dir: Path, s
     assert (owned / "manifest.json").is_file()
     assert sorted(path.name for path in outside.iterdir()) == ["sentinel.txt"]
     assert sentinel.read_text(encoding="utf-8") == "untouched"
+
+
+def test_session_start_never_opens_transcript_path(
+    tmp_path: Path, home_dir: Path, capsysbinary
+) -> None:
+    """A transcript path is data to hash away, never a file to read.
+
+    An audit ``open`` hook observes every file open in this process. A positive
+    control first proves the hook sees a transcript open, so the zero count
+    afterwards is evidence rather than a blind spot. Audit hooks cannot be
+    removed, so the hook is disarmed once the assertions are made.
+    """
+    project = tmp_path / "project"
+    project.mkdir()
+    _opt_in(project)
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("SECRET-TRANSCRIPT-CONTENT", encoding="utf-8")
+
+    armed = [True]
+    opened: list[str] = []
+
+    def audit(event: str, args: tuple) -> None:
+        if armed[0] and event == "open" and args and isinstance(args[0], (str, bytes, os.PathLike)):
+            name = os.fsdecode(args[0])
+            if name.endswith("transcript.jsonl"):
+                opened.append(name)
+
+    sys.addaudithook(audit)
+    try:
+        with transcript.open("rb") as handle:
+            handle.read()
+        assert len(opened) == 1, "audit hook must observe a transcript open (positive control)"
+        opened.clear()
+
+        payload = json.dumps(
+            {
+                "session_id": "transcript-probe",
+                "cwd": str(project),
+                "transcript_path": str(transcript),
+            }
+        ).encode("utf-8")
+        code = main(
+            ["session", "start", "--agent", "codex", "--project", str(project)],
+            env={},
+            cwd=project,
+            home=home_dir,
+            stdin=io.BytesIO(payload),
+        )
+        captured = capsysbinary.readouterr()
+    finally:
+        armed[0] = False
+
+    assert code == 0
+    assert captured.err == b""
+    assert opened == []
+    assert b"SECRET-TRANSCRIPT-CONTENT" not in captured.out
+
+
+def test_native_payload_limit_boundary_is_exact(tmp_path: Path, home_dir: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _opt_in(project)
+    env = isolated_env(home_dir)
+    limit = 65536
+
+    def payload_of_size(size: int) -> bytes:
+        skeleton = json.dumps({"session_id": "boundary-session", "cwd": str(project), "pad": ""})
+        padding = size - len(skeleton.encode("utf-8"))
+        assert padding >= 0
+        body = json.dumps(
+            {"session_id": "boundary-session", "cwd": str(project), "pad": "x" * padding}
+        ).encode("utf-8")
+        assert len(body) == size
+        return body
+
+    at_limit = run_cli(
+        ["session", "start", "--agent", "codex", "--project", str(project)],
+        env=env,
+        cwd=project,
+        stdin=payload_of_size(limit),
+    )
+    assert at_limit.code == 0, at_limit.stdout + at_limit.stderr
+    assert at_limit.stderr == ""
+
+    over_limit = run_cli(
+        ["session", "start", "--agent", "codex", "--project", str(project)],
+        env=env,
+        cwd=project,
+        stdin=payload_of_size(limit + 1),
+    )
+    assert over_limit.code == 1
+    assert over_limit.stderr == ""
+    assert decode(over_limit.stdout)["error"]["code"] == "invalid_event"
+    assert "payload exceeds 65536 bytes" in decode(over_limit.stdout)["error"]["message"]

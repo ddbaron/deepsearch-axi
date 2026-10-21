@@ -24,6 +24,7 @@ from support.env import FAKE_KEY, isolated_env
 from support.stub_server import StubServer, json_response
 
 from deepsearch_axi import models, transport
+from deepsearch_axi.cli import main
 from deepsearch_axi.models import TOOL_PATHS, Credential, DeepsearchError
 from deepsearch_axi.origin import validate_base_url
 
@@ -108,6 +109,44 @@ def test_post_tool_rejects_validator_origins_before_opening(
     )
     assert origin not in " ".join(visible)
     assert FAKE_KEY not in " ".join(visible)
+
+
+@pytest.mark.parametrize("origin", _REJECTED_ORIGINS)
+def test_cli_opens_no_connection_for_validator_origins(
+    origin: str,
+    tmp_path: Path,
+    home_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    # In-process companion to the subprocess checks: the connection factory is
+    # the only socket seam in transport, so a zero count proves the CLI's own
+    # validation stops before any connection is constructed.
+    opened: list[tuple[Any, ...]] = []
+
+    def record_open(*args: Any, **kwargs: Any) -> None:
+        opened.append(args)
+        raise AssertionError(f"_open_connection was called for rejected origin {origin!r}")
+
+    monkeypatch.setattr(transport, "_open_connection", record_open)
+    project = tmp_path / "project"
+    project.mkdir()
+
+    code = main(
+        ["search", "origin seam"],
+        env={"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": origin},
+        cwd=project,
+        home=home_dir,
+    )
+
+    captured = capsysbinary.readouterr()
+    assert code == 1
+    assert opened == []
+    assert captured.err == b""
+    visible = captured.out.decode("utf-8")
+    assert decode(visible)["error"]["code"] == "invalid_config"
+    assert FAKE_KEY not in visible
+    assert origin not in visible
 
 
 def test_post_tool_keeps_a_direct_empty_origin_rejected(
