@@ -125,6 +125,11 @@ class _StubHTTPServer(ThreadingHTTPServer):
     def record(self, request: RecordedRequest) -> None:
         self.requests.append(request)
 
+    def handle_error(self, request: object, client_address: object) -> None:
+        # Tests deliberately hang up, redirect, or probe TLS against the stub;
+        # those resets are expected and must not print tracebacks.
+        return
+
     def server_bind(self) -> None:
         # Skip http.server's reverse-DNS lookup so the stub stays offline.
         socketserver.TCPServer.server_bind(self)
