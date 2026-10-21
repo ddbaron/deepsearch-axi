@@ -89,7 +89,6 @@ GIT_BRANCH_READONLY_FLAGS = frozenset(
         "--sort",
     }
 )
-GIT_CHECKOUT_CREATE_OPTIONS = frozenset({"-b", "-B", "-c", "-C", "--orphan"})
 GIT_CHECKOUT_VALUE_OPTIONS = frozenset(
     {"--conflict", "--pathspec-from-file", "--pathspec-file-nul"}
 )
@@ -264,6 +263,173 @@ GIT_PULL_EXTRA_VALUE_OPTIONS = frozenset(
     {"--strategy", "-s", "--strategy-option", "-X", "--gpg-sign", "-S"}
 )
 GIT_FETCH_UNSAFE_OPTIONS = frozenset({"--mirror", "--refmap"})
+GIT_REBASE_UNSAFE_OPTIONS = frozenset({"--exec", "--update-refs"})
+GIT_REBASE_UNSAFE_SHORTS = frozenset({"x"})
+GIT_CHECKOUT_CREATE_SHORTS = frozenset({"b", "B", "c", "C"})
+GIT_CHECKOUT_CREATE_LONG_OPTIONS = frozenset({"--orphan", "--create", "--force-create"})
+GIT_BRANCH_MUTATION_SHORTS = frozenset({"f", "d", "D", "m", "M", "c", "C"})
+GIT_BRANCH_RENAME_OR_DELETE_FLAGS = frozenset({"-d", "-D", "-m", "-M", "-c", "-C"})
+GIT_BRANCH_RENAME_OR_DELETE_SHORTS = frozenset("dDmMcC")
+UNRESOLVED_TARGET_CHARACTERS = frozenset("$`*?[]\\{}~^@:")
+GIT_ALIAS_LIMIT = 4
+GIT_TARGET_CONFIG = re.compile(r"^remote\..+\.(fetch|mirror|uploadpack|receivepack|vcs)$")
+GIT_EXECUTION_CONFIG = frozenset({"core.sshcommand", "core.hookspath", "core.fsmonitor"})
+GIT_KNOWN_SUBCOMMANDS = frozenset(
+    {
+        "add",
+        "am",
+        "annotate",
+        "apply",
+        "archive",
+        "backfill",
+        "bisect",
+        "blame",
+        "branch",
+        "bundle",
+        "bugreport",
+        "cat-file",
+        "check-attr",
+        "check-ignore",
+        "check-mailmap",
+        "check-ref-format",
+        "checkout",
+        "checkout-index",
+        "cherry",
+        "cherry-pick",
+        "citool",
+        "clean",
+        "clone",
+        "column",
+        "commit",
+        "commit-graph",
+        "commit-tree",
+        "config",
+        "count-objects",
+        "credential",
+        "credential-cache",
+        "credential-store",
+        "daemon",
+        "describe",
+        "diagnose",
+        "diff",
+        "diff-files",
+        "diff-index",
+        "diff-pairs",
+        "diff-tree",
+        "difftool",
+        "fast-export",
+        "fast-import",
+        "fetch",
+        "fetch-pack",
+        "filter-branch",
+        "fmt-merge-msg",
+        "for-each-ref",
+        "for-each-repo",
+        "format-patch",
+        "fsck",
+        "gc",
+        "get-tar-commit-id",
+        "gitk",
+        "gitweb",
+        "grep",
+        "gui",
+        "hash-object",
+        "help",
+        "history",
+        "hook",
+        "http-backend",
+        "imap-send",
+        "index-pack",
+        "init",
+        "instaweb",
+        "interpret-trailers",
+        "last-modified",
+        "log",
+        "ls-files",
+        "ls-remote",
+        "ls-tree",
+        "mailinfo",
+        "mailsplit",
+        "maintenance",
+        "merge",
+        "merge-base",
+        "merge-file",
+        "merge-index",
+        "merge-one-file",
+        "merge-tree",
+        "mergetool",
+        "mktag",
+        "mktree",
+        "multi-pack-index",
+        "mv",
+        "name-rev",
+        "notes",
+        "pack-objects",
+        "pack-redundant",
+        "pack-refs",
+        "p4",
+        "patch-id",
+        "prune",
+        "prune-packed",
+        "pull",
+        "push",
+        "quiltimport",
+        "range-diff",
+        "read-tree",
+        "rebase",
+        "receive-pack",
+        "reflog",
+        "refs",
+        "remote",
+        "repack",
+        "replace",
+        "repo",
+        "request-pull",
+        "rerere",
+        "reset",
+        "restore",
+        "revert",
+        "rev-list",
+        "rev-parse",
+        "rm",
+        "scalar",
+        "send-email",
+        "send-pack",
+        "sh-i18n",
+        "sh-setup",
+        "shell",
+        "shortlog",
+        "show",
+        "show-branch",
+        "show-index",
+        "show-ref",
+        "sparse-checkout",
+        "stage",
+        "stash",
+        "status",
+        "stripspace",
+        "submodule",
+        "svn",
+        "switch",
+        "symbolic-ref",
+        "tag",
+        "unpack-file",
+        "unpack-objects",
+        "update-index",
+        "update-ref",
+        "update-server-info",
+        "upload-archive",
+        "upload-pack",
+        "var",
+        "verify-commit",
+        "verify-pack",
+        "verify-tag",
+        "version",
+        "whatchanged",
+        "worktree",
+        "write-tree",
+    }
+)
 SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
 SHELL_CONTROL_KEYWORDS = frozenset(
     {
@@ -612,27 +778,111 @@ def _first_positional(tokens: list[str], value_options: frozenset[str] = frozens
     return positionals[0] if positionals else None
 
 
-def _split_git_global(tokens: list[str]) -> tuple[str | None, list[str]]:
+def _unresolved_target(name: str | None) -> bool:
+    if not name:
+        return True
+    target = name.strip()
+    if not target or target == "-":
+        return True
+    if any(character in UNRESOLVED_TARGET_CHARACTERS for character in target):
+        return True
+    return any(character.isspace() for character in target)
+
+
+def _git_config_entry(text: str, *, config_env: bool) -> tuple[str, str | None] | None:
+    name, separator, value = text.partition("=")
+    name = name.strip()
+    if not separator or not name:
+        return None
+    return name, None if config_env else value
+
+
+def _split_git_global(
+    tokens: list[str],
+) -> tuple[str | None, list[str], list[tuple[str, str | None]], list[str]]:
+    configs: list[tuple[str, str | None]] = []
+    issues: list[str] = []
     index = 0
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
             index += 1
             break
+        if token in {"-c", "--config-env"}:
+            if index + 1 >= len(tokens):
+                issues.append(f"unsupported git option {token}: missing configuration")
+                index += 1
+                continue
+            entry = _git_config_entry(tokens[index + 1], config_env=token == "--config-env")
+            if entry is None:
+                issues.append(f"unsupported git option {token}: malformed configuration")
+            else:
+                configs.append(entry)
+            index += 2
+            continue
+        if token.startswith("--config-env="):
+            entry = _git_config_entry(token[len("--config-env=") :], config_env=True)
+            if entry is None:
+                issues.append("unsupported git option --config-env: malformed configuration")
+            else:
+                configs.append(entry)
+            index += 1
+            continue
+        if token.startswith("-c") and len(token) > 2:
+            entry = _git_config_entry(token[2:], config_env=False)
+            if entry is None:
+                issues.append("unsupported git option -c: malformed configuration")
+            else:
+                configs.append(entry)
+            index += 1
+            continue
         if token in GIT_GLOBAL_VALUE_OPTIONS:
             index += 2
             continue
         if token.startswith(GIT_GLOBAL_EQUALS_PREFIXES):
             index += 1
             continue
-        if token.startswith(("-C", "-c")) and len(token) > 2:
-            index += 1
-            continue
         if token.startswith("-"):
             index += 1
             continue
-        return token, tokens[index + 1 :]
-    return None, []
+        return token, tokens[index + 1 :], configs, issues
+    return None, [], configs, issues
+
+
+def _resolve_git_alias(
+    configs: list[tuple[str, str | None]],
+    subcommand: str,
+    depth: int,
+) -> tuple[list[str] | None, list[str]]:
+    if depth >= GIT_ALIAS_LIMIT:
+        return None, ["nested git alias exceeds the audit depth limit"]
+    value: str | None = None
+    unresolved = False
+    for key, configured in configs:
+        lowered = key.lower()
+        if not lowered.startswith("alias."):
+            continue
+        if lowered[len("alias.") :] != subcommand.lower():
+            continue
+        if configured is None:
+            unresolved = True
+        else:
+            value = configured
+    if unresolved:
+        return None, [f"unsupported git alias {subcommand}: value is not statically readable"]
+    if value is None:
+        return None, []
+    if value.startswith("!"):
+        return None, [f"unsupported git alias {subcommand}: shell payload"]
+    if any(character in value for character in ";&|<>`\n\r"):
+        return None, [f"unsupported git alias {subcommand}"]
+    try:
+        tokens = shlex.split(value, posix=True)
+    except ValueError:
+        return None, [f"unsupported git alias {subcommand}: malformed payload"]
+    if not tokens:
+        return None, [f"unsupported git alias {subcommand}: empty payload"]
+    return tokens, []
 
 
 def _normalize_ref(name: str | None) -> str:
@@ -681,6 +931,8 @@ def _rebase_targets(rest: list[str]) -> tuple[set[str], list[str]]:
                 modes.add(name)
                 position += 1
                 continue
+            if name in GIT_REBASE_UNSAFE_OPTIONS:
+                return set(), [f"unsupported rebase option {name}"]
             if name in GIT_REBASE_VALUE_OPTIONS:
                 if separated:
                     position += 1
@@ -699,6 +951,8 @@ def _rebase_targets(rest: list[str]) -> tuple[set[str], list[str]]:
             offset = 0
             while offset < len(letters):
                 letter = letters[offset]
+                if letter in GIT_REBASE_UNSAFE_SHORTS:
+                    return set(), [f"unsupported rebase option -{letter}"]
                 if letter in GIT_REBASE_VALUE_SHORTS:
                     if offset + 1 >= len(letters):
                         if position + 1 >= len(rest):
@@ -721,7 +975,12 @@ def _rebase_targets(rest: list[str]) -> tuple[set[str], list[str]]:
         return set(), ["unsupported rebase operands with --root"]
     if len(positionals) > 2:
         return set(), ["unsupported rebase operands"]
-    return ({positionals[1]}, []) if len(positionals) == 2 else (set(), [])
+    if len(positionals) == 2:
+        target = positionals[1]
+        if _unresolved_target(target):
+            return set(), [f"unsupported rebase target {target}"]
+        return {target}, []
+    return set(), []
 
 
 def _fetch_operands(
@@ -859,70 +1118,182 @@ def _branch_context_issues(
     return issues
 
 
-def _git_issues(args: list[str], branch: str | None, protected: set[str], raw: str) -> list[str]:
-    subcommand, rest = _split_git_global(args)
+def _branch_target_issues(rest: list[str], protected: set[str]) -> list[str]:
+    attached: list[str] = []
+    attached_flags: set[str] = set()
+    for token in rest:
+        if not token.startswith("-") or token.startswith("--") or token == "-":
+            continue
+        letters = token[1:]
+        if letters[:1] in GIT_BRANCH_MUTATION_SHORTS and len(letters) > 1:
+            attached.append(letters[1:])
+            attached_flags.add(letters[0])
+    mutating = bool(attached) or any(token in GIT_BRANCH_MUTATION_FLAGS for token in rest)
+    if not mutating and any(token in GIT_BRANCH_READONLY_FLAGS for token in rest):
+        return []
+    positionals = _positionals(rest)
+    all_operands_are_targets = any(
+        token in GIT_BRANCH_RENAME_OR_DELETE_FLAGS for token in rest
+    ) or bool(attached_flags & GIT_BRANCH_RENAME_OR_DELETE_SHORTS)
+    if all_operands_are_targets:
+        targets = positionals + attached
+    else:
+        targets = positionals[:1] + attached
+    if any(_unresolved_target(target) for target in targets):
+        return ["unsupported branch mutation target"]
+    if (mutating or targets) and any(_is_protected(target, protected) for target in targets):
+        return ["prohibited protected-branch mutation"]
+    return []
+
+
+def _checkout_target_issues(rest: list[str], protected: set[str]) -> list[str]:
+    created: str | None = None
+    missing: str | None = None
+    positionals: list[str] = []
+    index = 0
+    while index < len(rest):
+        token = rest[index]
+        if token == "--":
+            break
+        if token in GIT_CHECKOUT_VALUE_OPTIONS:
+            index += 2
+            continue
+        if token.startswith("--"):
+            name, separator, value = token.partition("=")
+            if name in GIT_CHECKOUT_CREATE_LONG_OPTIONS:
+                if separator:
+                    created = value
+                elif index + 1 < len(rest):
+                    created = rest[index + 1]
+                    index += 1
+                else:
+                    missing = name
+            index += 1
+            continue
+        if token.startswith("-") and token != "-":
+            letters = token[1:]
+            offset = 0
+            while offset < len(letters):
+                letter = letters[offset]
+                if letter in GIT_CHECKOUT_CREATE_SHORTS:
+                    attached = letters[offset + 1 :]
+                    if attached:
+                        created = attached
+                    elif index + 1 < len(rest):
+                        created = rest[index + 1]
+                        index += 1
+                    else:
+                        missing = f"-{letter}"
+                    offset = len(letters)
+                    break
+                offset += 1
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    if missing is not None:
+        return [f"unsupported checkout option {missing}: missing value"]
+    target = created if created is not None else (positionals[0] if positionals else None)
+    if target is None:
+        return []
+    if _unresolved_target(target):
+        return ["unsupported checkout target"]
+    if _is_protected(target, protected):
+        return ["prohibited protected-branch mutation"]
+    return []
+
+
+def _git_config_issues(
+    configs: list[tuple[str, str | None]],
+    branch: str | None,
+    protected: set[str],
+) -> list[str]:
+    issues: list[str] = []
+    for key, value in configs:
+        lowered = key.lower()
+        if lowered.startswith("alias."):
+            continue
+        if lowered in GIT_EXECUTION_CONFIG:
+            issues.append(f"unsupported git configuration {key}")
+            continue
+        match = GIT_TARGET_CONFIG.fullmatch(lowered)
+        if match is None:
+            continue
+        option = match.group(1)
+        if value is None:
+            issues.append(f"unsupported git configuration {key}: value is not statically readable")
+            continue
+        if option == "fetch":
+            refspecs = value.split()
+            if not refspecs:
+                issues.append("unsupported fetch configuration: empty refspec")
+            for refspec in refspecs:
+                issues.extend(_refspec_issues(refspec, branch, protected))
+            continue
+        if option == "mirror":
+            if value.strip().lower() in {"true", "yes", "on", "1"}:
+                issues.append("unsupported mirrored fetch configuration")
+            continue
+        issues.append(f"unsupported git configuration {key}")
+    return issues
+
+
+def _git_issues(
+    args: list[str],
+    branch: str | None,
+    protected: set[str],
+    raw: str,
+    depth: int = 0,
+) -> list[str]:
+    subcommand, rest, configs, global_issues = _split_git_global(args)
+    if global_issues:
+        return global_issues
     if subcommand is None:
         return []
     names = _protected_names(protected)
+    issues = _git_config_issues(configs, branch, names)
+    alias, alias_issues = _resolve_git_alias(configs, subcommand, depth)
+    if alias_issues:
+        return issues + alias_issues
+    if alias is not None:
+        return issues + _git_issues(alias + rest, branch, protected, raw, depth + 1)
+    if subcommand not in GIT_KNOWN_SUBCOMMANDS:
+        return issues + [f"unsupported git subcommand {subcommand}"]
     if subcommand == "push":
-        return ["prohibited remote push"]
+        return issues + ["prohibited remote push"]
     if subcommand == "remote":
         if _first_positional(rest) in REMOTE_WRITE_ACTIONS:
-            return ["prohibited remote mutation"]
-        return []
+            return issues + ["prohibited remote mutation"]
+        return issues
     if subcommand == "branch":
-        mutating = any(token in GIT_BRANCH_MUTATION_FLAGS for token in rest)
-        if not mutating and any(token in GIT_BRANCH_READONLY_FLAGS for token in rest):
-            return []
-        targets = _positionals(rest)
-        if targets and any(_is_protected(target, names) for target in targets):
-            return ["prohibited protected-branch mutation"]
-        return []
+        return issues + _branch_target_issues(rest, names)
     if subcommand in {"checkout", "switch"}:
-        target: str | None = None
-        index = 0
-        while index < len(rest):
-            token = rest[index]
-            if token == "--":
-                break
-            if token in GIT_CHECKOUT_CREATE_OPTIONS:
-                target = rest[index + 1] if index + 1 < len(rest) else None
-                break
-            if token in GIT_CHECKOUT_VALUE_OPTIONS:
-                index += 2
-                continue
-            if token.startswith("-"):
-                index += 1
-                continue
-            target = token
-            break
-        if _is_protected(target, names):
-            return ["prohibited protected-branch mutation"]
-        return []
+        return issues + _checkout_target_issues(rest, names)
     if subcommand in {"update-ref", "symbolic-ref"}:
         if "--stdin" in rest:
-            return ["unsupported update-ref stdin input"]
-        if any(
-            _is_protected(target, names)
-            for target in _positionals(rest, GIT_UPDATE_REF_VALUE_OPTIONS)
-        ):
-            return ["prohibited protected-branch mutation"]
-        return []
-    if subcommand == "rebase":
-        issues = _branch_context_issues(subcommand, rest, branch, names, raw)
-        targets, target_issues = _rebase_targets(rest)
-        issues.extend(target_issues)
+            return issues + ["unsupported update-ref stdin input"]
+        targets = _positionals(rest, GIT_UPDATE_REF_VALUE_OPTIONS)
+        checked = targets if subcommand == "symbolic-ref" else targets[:1]
+        if any(_unresolved_target(target) for target in checked):
+            return issues + ["unsupported update-ref target"]
         if any(_is_protected(target, names) for target in targets):
-            issues.append("prohibited protected-branch mutation")
+            return issues + ["prohibited protected-branch mutation"]
         return issues
+    if subcommand == "rebase":
+        rebase_issues = _branch_context_issues(subcommand, rest, branch, names, raw)
+        targets, target_issues = _rebase_targets(rest)
+        rebase_issues.extend(target_issues)
+        if any(_is_protected(target, names) for target in targets):
+            rebase_issues.append("prohibited protected-branch mutation")
+        return issues + rebase_issues
     if subcommand in {"fetch", "pull"}:
-        issues = _fetch_issues(rest, branch, names, subcommand=subcommand)
+        fetch_issues = _fetch_issues(rest, branch, names, subcommand=subcommand)
         if subcommand == "pull":
-            issues.extend(_branch_context_issues(subcommand, rest, branch, names, raw))
-        return issues
+            fetch_issues.extend(_branch_context_issues(subcommand, rest, branch, names, raw))
+        return issues + fetch_issues
     if subcommand in GIT_CURRENT_BRANCH_MUTATORS:
-        return _branch_context_issues(subcommand, rest, branch, names, raw)
-    return []
+        return issues + _branch_context_issues(subcommand, rest, branch, names, raw)
+    return issues
 
 
 def _gh_issues(args: list[str]) -> list[str]:
@@ -1395,6 +1766,50 @@ def _mutate_rebase_explicit_target(root: Path) -> None:
 
 def _mutate_fetch_destination(root: Path) -> None:
     _append_action(root, "git fetch . HEAD:refs/heads/main")
+
+
+def _mutate_alias_rebase_target(root: Path) -> None:
+    _append_action(
+        root,
+        f'git -c "alias.rewrite=rebase {FEATURE_BRANCH} main" rewrite',
+        branch=FEATURE_BRANCH,
+    )
+
+
+def _mutate_fetch_config_destination(root: Path) -> None:
+    _append_action(
+        root,
+        "git -c remote.origin.fetch=+HEAD:refs/heads/main fetch origin",
+        branch=FEATURE_BRANCH,
+    )
+
+
+def _mutate_rebase_exec_payload(root: Path) -> None:
+    _append_action(
+        root,
+        'git rebase --exec "git branch -f main HEAD" main',
+        branch=FEATURE_BRANCH,
+    )
+
+
+def _mutate_rebase_update_refs(root: Path) -> None:
+    _append_action(
+        root,
+        "git rebase --update-refs --root --onto other-base",
+        branch=FEATURE_BRANCH,
+    )
+
+
+def _mutate_rebase_dynamic_target(root: Path) -> None:
+    _append_action(
+        root,
+        f'git rebase {FEATURE_BRANCH} "$TARGET"',
+        branch=FEATURE_BRANCH,
+    )
+
+
+def _mutate_attached_checkout_target(root: Path) -> None:
+    _append_action(root, "git checkout -Bmain HEAD", branch=FEATURE_BRANCH)
 
 
 def _mutate_force_fetch_destination(root: Path) -> None:
@@ -2052,6 +2467,293 @@ GIT_TARGET_CASES = [
         "",
         id="allow-status",
     ),
+    pytest.param(
+        f'git -c "alias.rewrite=rebase {FEATURE_BRANCH} main" rewrite',
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-alias-rebase-target",
+    ),
+    pytest.param(
+        'git -c "alias.sync=!git push origin main" sync',
+        FEATURE_BRANCH,
+        True,
+        "unsupported git alias",
+        id="reject-shell-alias",
+    ),
+    pytest.param(
+        "git rewrite",
+        FEATURE_BRANCH,
+        True,
+        "unsupported git subcommand",
+        id="reject-unresolved-alias",
+    ),
+    pytest.param(
+        'git -c "alias.co=checkout main" co',
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-alias-checkout-main",
+    ),
+    pytest.param(
+        'git -c "alias.st=status --porcelain" st',
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-literal-alias-status",
+    ),
+    pytest.param(
+        'git -c "alias.lg=log --oneline main" lg',
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-alias-read-only-main",
+    ),
+    pytest.param(
+        "git -c user.name=Agent status --porcelain",
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-unrelated-config",
+    ),
+    pytest.param(
+        "git -c remote.origin.fetch=+HEAD:refs/heads/main fetch origin",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-fetch-config-destination",
+    ),
+    pytest.param(
+        "git -c remote.origin.fetch=HEAD:main fetch origin",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-fetch-config-short-destination",
+    ),
+    pytest.param(
+        "git -c remote.origin.mirror=true fetch origin",
+        FEATURE_BRANCH,
+        True,
+        "mirrored fetch",
+        id="reject-fetch-config-mirror",
+    ),
+    pytest.param(
+        "git -c remote.origin.fetch= fetch origin",
+        FEATURE_BRANCH,
+        True,
+        "empty refspec",
+        id="reject-fetch-config-empty",
+    ),
+    pytest.param(
+        "git --config-env=remote.origin.fetch=FETCH_SPEC fetch origin",
+        FEATURE_BRANCH,
+        True,
+        "statically readable",
+        id="reject-fetch-config-env",
+    ),
+    pytest.param(
+        "git --config-env=alias.rewrite=ALIAS rewrite",
+        FEATURE_BRANCH,
+        True,
+        "statically readable",
+        id="reject-alias-config-env",
+    ),
+    pytest.param(
+        "git -c remote.origin.fetch=+HEAD:refs/heads/feature fetch origin",
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-fetch-config-feature-destination",
+    ),
+    pytest.param(
+        'git rebase --exec "git branch -f main HEAD" main',
+        FEATURE_BRANCH,
+        True,
+        "unsupported rebase option --exec",
+        id="reject-rebase-exec",
+    ),
+    pytest.param(
+        'git rebase -x "git push origin main" main',
+        FEATURE_BRANCH,
+        True,
+        "unsupported rebase option -x",
+        id="reject-rebase-short-exec",
+    ),
+    pytest.param(
+        "git rebase --update-refs --root --onto other-base",
+        FEATURE_BRANCH,
+        True,
+        "unsupported rebase option --update-refs",
+        id="reject-rebase-update-refs",
+    ),
+    pytest.param(
+        "git rebase --update-refs main",
+        FEATURE_BRANCH,
+        True,
+        "unsupported rebase option --update-refs",
+        id="reject-rebase-update-refs-upstream",
+    ),
+    pytest.param(
+        "git rebase --no-update-refs main",
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-rebase-no-update-refs",
+    ),
+    pytest.param(
+        f'git rebase {FEATURE_BRANCH} "$TARGET"',
+        FEATURE_BRANCH,
+        True,
+        "unsupported rebase target",
+        id="reject-rebase-dynamic-target",
+    ),
+    pytest.param(
+        f"git rebase {FEATURE_BRANCH} $TARGET",
+        FEATURE_BRANCH,
+        True,
+        "unsupported rebase target",
+        id="reject-rebase-unquoted-dynamic-target",
+    ),
+    pytest.param(
+        f"git rebase {FEATURE_BRANCH} main~1",
+        FEATURE_BRANCH,
+        True,
+        "unsupported rebase target",
+        id="reject-rebase-revision-target",
+    ),
+    pytest.param(
+        'git checkout "$TARGET"',
+        FEATURE_BRANCH,
+        True,
+        "unsupported checkout target",
+        id="reject-checkout-dynamic-target",
+    ),
+    pytest.param(
+        'git update-ref "refs/heads/$TARGET" deadbeef',
+        FEATURE_BRANCH,
+        True,
+        "unsupported update-ref target",
+        id="reject-update-ref-dynamic-target",
+    ),
+    pytest.param(
+        'git branch -f "$TARGET" HEAD',
+        FEATURE_BRANCH,
+        True,
+        "unsupported branch mutation target",
+        id="reject-branch-dynamic-target",
+    ),
+    pytest.param(
+        'git branch --list "$TARGET"',
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-branch-list-dynamic-source",
+    ),
+    pytest.param(
+        "git checkout -Bmain HEAD",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-checkout-attached-force-create-main",
+    ),
+    pytest.param(
+        f"git checkout {FEATURE_BRANCH} -Bmain",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-checkout-trailing-attached-force-create-main",
+    ),
+    pytest.param(
+        "git checkout -bmain HEAD",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-checkout-attached-create-main",
+    ),
+    pytest.param(
+        "git checkout --orphan=main",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-checkout-orphan-main",
+    ),
+    pytest.param(
+        "git switch -cmain",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-switch-attached-create-main",
+    ),
+    pytest.param(
+        "git switch --create=main",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-switch-long-create-main",
+    ),
+    pytest.param(
+        "git switch --create main",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-switch-long-create-separate-main",
+    ),
+    pytest.param(
+        "git checkout --force-create=main HEAD",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-checkout-long-force-create-main",
+    ),
+    pytest.param(
+        "git branch -Dmain",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-branch-attached-delete-main",
+    ),
+    pytest.param(
+        "git branch -m old-name main",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-branch-rename-to-main",
+    ),
+    pytest.param(
+        "git branch -m main new-name",
+        FEATURE_BRANCH,
+        True,
+        "protected-branch",
+        id="reject-branch-rename-from-main",
+    ),
+    pytest.param(
+        "git branch -f feature-source main",
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-branch-force-feature-from-main-source",
+    ),
+    pytest.param(
+        "git checkout -bcandidate main",
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-checkout-create-from-main-source",
+    ),
+    pytest.param(
+        "git switch -c candidate origin/main",
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-switch-create-from-main-source",
+    ),
+    pytest.param(
+        "git branch -d old-feature",
+        FEATURE_BRANCH,
+        False,
+        "",
+        id="allow-branch-delete-feature",
+    ),
 ]
 
 
@@ -2343,6 +3045,36 @@ EXPLICIT_TARGET_MUTATIONS = [
         _mutate_shell_wrapper_rebase_target,
         "protected-branch",
         id="shell-wrapper-rebase-target",
+    ),
+    pytest.param(
+        _mutate_alias_rebase_target,
+        "protected-branch",
+        id="alias-rebase-target",
+    ),
+    pytest.param(
+        _mutate_fetch_config_destination,
+        "protected-branch",
+        id="fetch-config-destination",
+    ),
+    pytest.param(
+        _mutate_rebase_exec_payload,
+        "unsupported rebase option",
+        id="rebase-exec-payload",
+    ),
+    pytest.param(
+        _mutate_rebase_update_refs,
+        "unsupported rebase option",
+        id="rebase-update-refs",
+    ),
+    pytest.param(
+        _mutate_rebase_dynamic_target,
+        "unsupported rebase target",
+        id="rebase-dynamic-target",
+    ),
+    pytest.param(
+        _mutate_attached_checkout_target,
+        "protected-branch",
+        id="attached-checkout-target",
     ),
 ]
 
