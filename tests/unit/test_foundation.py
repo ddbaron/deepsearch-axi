@@ -479,7 +479,7 @@ def test_manifest_round_trip_and_determinism(tmp_path: Path) -> None:
         "hosts",
     ]
     assert list(payload["hosts"]) == ["claude-code", "opencode"]
-    assert payload["version"] == "0.1.0"
+    assert payload["version"] == VERSION
 
     manifest_path = root / MANIFEST_RELATIVE
     manifest_path.parent.mkdir()
@@ -511,7 +511,7 @@ def _valid_payload(root: Path) -> dict:
     return {
         "owner": "deepsearch-axi",
         "schema": 1,
-        "version": "0.1.0",
+        "version": VERSION,
         "project": str(root.resolve()),
         "executable": "/bin/deepsearch-axi",
         "command": ["deepsearch-axi"],

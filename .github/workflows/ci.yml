@@ -126,6 +126,8 @@ jobs:
           python -m pip install pipx uv
       - name: Build distributions
         run: python -m build
+      - name: Version single-source guard
+        run: python scripts/check_version.py
       - name: Check distribution metadata
         run: python -m twine check dist/*
       - name: Provision local wheelhouse

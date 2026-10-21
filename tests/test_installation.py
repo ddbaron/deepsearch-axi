@@ -23,11 +23,15 @@ import sys
 from pathlib import Path
 
 import pytest
+import tomlkit
 import toon_format
 from support.env import FAKE_KEY, SITECUSTOMIZE_DIR
 from support.stub_server import StubServer, json_response
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_VERSION = str(
+    tomlkit.parse((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+)
 INSTALLERS = ("pip", "pipx", "uv")
 SEARCH_PAYLOAD = {
     "results": [
@@ -212,7 +216,7 @@ def _install_pip(tmp: Path, wheelhouse: Path) -> Path:
             "--no-index",
             "--find-links",
             wheelhouse,
-            "deepsearch-axi==0.1.0",
+            "deepsearch-axi==" + PROJECT_VERSION,
         ],
         env,
         timeout=300,
@@ -409,7 +413,7 @@ def test_offline_installation_and_runs(
 
     version = _run([executable, "--version"], base_env, cwd=project)
     assert version.returncode == 0, version.stderr
-    assert version.stdout == "0.1.0\n"
+    assert version.stdout == PROJECT_VERSION + "\n"
     assert version.stderr == ""
 
     _assert_installed_process_guards(executable, base_env, project)

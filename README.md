@@ -259,6 +259,10 @@ python -m twine check dist/*
 
 The test suite is offline: it uses fake keys, isolated HOME/XDG roots, loopback stub servers, generated native hooks, a Node-executed OpenCode plugin, and a socket guard inherited by child Python processes. The installation tests need a pre-provisioned wheelhouse: CI downloads dependency wheels before running pytest, and locally you can set `DEEPSEARCH_AXI_WHEELHOUSE` or create `./wheelhouse` with the two runtime distributions. They also need the `pipx` and `uv` executables on `PATH`; CI installs both. CI runs the same checks on CPython 3.10, 3.11, 3.12, 3.13, and 3.14 on Linux plus a macOS job, installs the built wheel in isolated environments, and exercises the Node-based native plugin adapters. No workflow requires a secret, live API call, publishing permission, or release step.
 
+## Versioning
+
+`pyproject.toml` is the only place the version is written. The installed package reports it through distribution metadata, and a run from a source checkout reads the adjacent `pyproject.toml`; `scripts/check_version.py` and CI fail if either disagrees with that file. Development continues on `main`; releases are git tags cut from it, with no changelog file or release branch, and publishing to PyPI is not part of the current workflow.
+
 ## License
 
 MIT License. See `LICENSE` for the full text. Copyright (c) 2026 Derek Baron.

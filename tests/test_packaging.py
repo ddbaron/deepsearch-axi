@@ -108,14 +108,13 @@ def test_metadata_contract(distributions: tuple[Path, Path]) -> None:
     document = tomlkit.parse((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = document["project"]
     assert str(project["name"]) == "deepsearch-axi"
-    assert str(project["version"]) == "0.1.0"
     assert str(project["requires-python"]) == ">=3.10"
     assert str(project["license"]) == "MIT"
     assert dict(project["scripts"]) == {"deepsearch-axi": "deepsearch_axi._entry:main"}
     assert dict(project["urls"])["Repository"] == "https://github.com/ddbaron/deepsearch-axi"
 
     assert metadata["Name"] == "deepsearch-axi"  # type: ignore[index]
-    assert metadata["Version"] == "0.1.0"  # type: ignore[index]
+    assert metadata["Version"] == str(project["version"])  # type: ignore[index]
     assert metadata["Requires-Python"] == ">=3.10"  # type: ignore[index]
     license_text = metadata["License-Expression"] or metadata["License"]  # type: ignore[index]
     assert license_text == "MIT"

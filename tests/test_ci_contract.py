@@ -26,6 +26,7 @@ REQUIRED_RUNS: dict[str, tuple[str, ...]] = {
     ),
     "package": (
         "python -m build",
+        "python scripts/check_version.py",
         "python -m twine check dist/*",
         "python -m pytest -q tests/test_packaging.py tests/test_installation.py",
     ),
