@@ -1,9 +1,11 @@
 """Failure constructors for the frozen deepsearch-axi error table.
 
 Every constructor returns a :class:`deepsearch_axi.models.Failure` with a fixed
-message and one or two actionable hints. Callers never pass user-controlled
-text except :func:`usage_failure` (safe argv tokens only) and the safe labels
-accepted by :func:`setup_conflict` and :func:`local_io`.
+message and one or two actionable hints. Messages never echo user input except
+through :func:`usage_failure` (safe argv tokens only), :func:`setup_conflict`
+(fixed reasons and owned project-relative labels), and :func:`local_io` (owned
+labels or absolute paths, which the output boundary redacts when they reflect
+the effective credential).
 """
 
 from __future__ import annotations

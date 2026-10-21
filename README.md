@@ -130,11 +130,11 @@ Dotenv files are read as UTF-8 with literal semantics. Blank lines and `#` comme
 
 `DEEPSEEK_BASE_URL` is a process-environment-only setting that changes the API origin, not a dotenv key and not an arbitrary path prefix. Unset or empty uses `https://api.deepseek.com`. An optional trailing slash is accepted; `/v1` prefixes, non-root paths, queries, fragments, userinfo, and malformed values are rejected before any credential-bearing request.
 
-An HTTPS origin accepts the official hostname or any trusted custom hostname, with an optional port. It is an operator-selected trusted endpoint and credential recipient that receives the API key, so enable it only when you trust the endpoint and its TLS chain; default certificate verification remains enabled. HTTP is permitted only for numeric loopback development origins, for example `http://127.0.0.1:8080` or `http://[::1]:8080`; `localhost` and nonnumeric hostnames are rejected for HTTP before a credential-bearing request. Environment proxies, netrc credentials, and automatic redirect following of any status or origin are never used.
+An HTTPS origin accepts the official hostname or any trusted custom hostname, with an optional port. It is an operator-selected trusted endpoint and credential recipient that receives the API key, so enable it only when you trust the endpoint and its TLS chain; default certificate verification remains enabled. HTTP is permitted only for numeric loopback development origins, specifically the `127.0.0.1` and `::1` hosts, for example `http://127.0.0.1:8080` or `http://[::1]:8080`; `localhost` and nonnumeric hostnames are rejected for HTTP before a credential-bearing request. Environment proxies, netrc credentials, and automatic redirect following of any status or origin are never used.
 
 ### Bounded requests and redaction
 
-Each command performs exactly one POST with a fixed 30-second timeout and no retry loop. A 200 response is read to at most 8 MiB plus one byte; larger responses fail `response_too_large`. Non-200 response bodies are never read, parsed, logged, or printed; status alone maps to the documented error code. The effective key is recursively redacted from every visible string, including reflected content and transport diagnostics, before encoding and truncation. Stderr is sanitized through the same policy.
+Each search or fetch performs exactly one POST with a fixed 30-second timeout and no retry loop. A 200 response is read to at most 8 MiB plus one byte; larger responses fail `response_too_large`. Non-200 response bodies are never read, parsed, logged, or printed; status alone maps to the documented error code. The effective key is recursively redacted from every visible string, including reflected content and transport diagnostics, before encoding and truncation. Nothing is written to stderr.
 
 ### Local state and privacy
 
@@ -247,6 +247,7 @@ From a source checkout:
 
 ```sh
 python -m pip install -r requirements-dev.txt -e .
+python -m pip install rumdl
 python -m pytest -q
 python -m ruff check .
 python -m ruff format --check .
@@ -256,7 +257,7 @@ python -m build
 python -m twine check dist/*
 ```
 
-The test suite is offline: it uses fake keys, isolated HOME/XDG roots, loopback stub servers, generated native hooks, a Node-executed OpenCode plugin, and a socket guard inherited by child Python processes. The installation tests need a pre-provisioned wheelhouse: CI downloads dependency wheels before running pytest, and locally you can set `DEEPSEARCH_AXI_WHEELHOUSE` or create `./wheelhouse` with the two runtime distributions. CI runs the same checks on CPython 3.10, 3.11, 3.12, 3.13, and 3.14 on Linux plus a macOS job, installs the built wheel in isolated environments, and exercises the Node-based native plugin adapters. No workflow requires a secret, live API call, publishing permission, or release step.
+The test suite is offline: it uses fake keys, isolated HOME/XDG roots, loopback stub servers, generated native hooks, a Node-executed OpenCode plugin, and a socket guard inherited by child Python processes. The installation tests need a pre-provisioned wheelhouse: CI downloads dependency wheels before running pytest, and locally you can set `DEEPSEARCH_AXI_WHEELHOUSE` or create `./wheelhouse` with the two runtime distributions. They also need the `pipx` and `uv` executables on `PATH`; CI installs both. CI runs the same checks on CPython 3.10, 3.11, 3.12, 3.13, and 3.14 on Linux plus a macOS job, installs the built wheel in isolated environments, and exercises the Node-based native plugin adapters. No workflow requires a secret, live API call, publishing permission, or release step.
 
 ## License
 

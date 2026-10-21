@@ -1,9 +1,9 @@
 """Read-only local readiness context for the home view and session start.
 
 The assembled :class:`~deepsearch_axi.models.LocalContext` contains only
-display-safe values: a collapsed executable path, the actual cwd, credential
+non-secret fields: a collapsed executable path, the actual cwd, credential
 state and source label, the validated API origin, integration states and the
-prior state for the exact cwd scope. It never reads a credential value, never
+prior state for the exact cwd scope. It never stores a credential value, never
 opens a socket and never creates or locks tool state.
 
 Integration readiness is inspected from the live files a setup run owns rather
