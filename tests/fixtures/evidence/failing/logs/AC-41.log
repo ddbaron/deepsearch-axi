@@ -1,0 +1,3 @@
+AC-41 synthetic evidence log
+command: python -m pytest -q --junitxml="$ARTIFACTS/pytest.xml"
+result: passed

@@ -1,0 +1,3 @@
+AC-42 synthetic evidence log
+command: python -m build && python -m twine check dist/*
+result: passed
