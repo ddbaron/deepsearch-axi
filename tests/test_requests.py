@@ -208,6 +208,8 @@ _VALID_SEARCH_CASES: tuple[tuple[list[str], dict[str, object]], ...] = (
     (["search", "q", "--count", "1"], {"count": 1}),
     (["search", "q", "--count", "50"], {"count": 50}),
     (["search", "q"], {"localization": ""}),
+    # An explicitly supplied empty localization is also valid and reaches transport.
+    (["search", "q", "--localization", ""], {"localization": ""}),
     (["search", "q", "--localization", "192.0.2.44"], {"localization": "192.0.2.44"}),
     (["search", "q", "--localization", "2001:db8::5"], {"localization": "2001:db8::5"}),
     # A zone-scoped literal is still an IPv6 address; the value is not rewritten.
@@ -280,6 +282,9 @@ _INVALID_FETCH_CASES: tuple[str, ...] = (
     "https://example.com:notaport/article",
     "https://example.com/\x01control",
     "https://example.com/line\nbreak",
+    "https://example.com/tab\tcharacter",
+    "https://example.com/\x7fdelete",
+    "https://:443/missing-host-with-port",
     "https://example.com/" + "a" * 8183,
     # Exactly one character over the 8192-character limit.
     "https://example.com/" + "a" * (8193 - len("https://example.com/")),
@@ -303,6 +308,11 @@ def test_fetch_contract(
         "http://example.com/page?x=1&y=2#fragment",
         "https://example.com/a%20b?x=1&y=%2F",
         "http://127.0.0.1:8080/path/%E2%9C%93",
+        # Scheme and host case, bracketed IPv6 and an explicit default port are
+        # transmitted exactly as supplied.
+        "HTTPS://EXAMPLE.COM/Mixed-Case",
+        "https://[::1]:8443/v6",
+        "https://example.com:443/explicit-port",
         target_url,
         boundary,
         emoji_boundary,

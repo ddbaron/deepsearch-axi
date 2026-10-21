@@ -18,11 +18,13 @@ from __future__ import annotations
 import importlib.resources
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 from deepsearch_axi._version import VERSION
 from deepsearch_axi.auth import probe_credential
@@ -40,6 +42,11 @@ from deepsearch_axi.origin import validate_base_url
 from deepsearch_axi.state import find_state_root, read_view
 
 _HOOK_EVENTS = ("SessionStart", "SessionEnd")
+# Claude Code matches a SessionStart hook group's matcher against the source of
+# the session start. The integration only captures every start when the owned
+# group's matcher covers all of these sources; a missing matcher matches all.
+_CLAUDE_SESSION_START_SOURCES = ("startup", "resume", "clear", "compact")
+_NO_MATCHER = object()
 _HOST_FILES: dict[AgentName, tuple[str, ...]] = {
     "claude-code": (".claude/settings.json",),
     "codex": (".codex/hooks.json", ".codex/config.toml"),
@@ -126,31 +133,60 @@ def _read_json_object(path: Path) -> dict | None:
     return document if isinstance(document, dict) else None
 
 
-def _hook_handlers(document: dict) -> dict[str, list[tuple[object, str]]] | None:
-    """Extract every native handler as ``(type, command)``, preserving duplicates."""
+class _HookHandler(NamedTuple):
+    """One native handler plus the matcher of the group that encloses it."""
+
+    kind: object
+    command: str
+    matcher: object
+
+
+def _hook_handlers(document: dict) -> dict[str, list[_HookHandler]] | None:
+    """Extract every native handler, preserving its enclosing group's matcher."""
     hooks = document.get("hooks")
     if not isinstance(hooks, dict):
         return None
-    handlers: dict[str, list[tuple[object, str]]] = {}
+    handlers: dict[str, list[_HookHandler]] = {}
     for event in _HOOK_EVENTS:
         groups = hooks.get(event)
         if not isinstance(groups, list):
             return None
-        found: list[tuple[object, str]] = []
+        found: list[_HookHandler] = []
         for group in groups:
             if not isinstance(group, dict):
                 continue
             native = group.get("hooks")
             if not isinstance(native, list):
                 continue
+            matcher = group["matcher"] if "matcher" in group else _NO_MATCHER
             for handler in native:
                 if not isinstance(handler, dict):
                     continue
                 command = handler.get("command")
                 if isinstance(command, str):
-                    found.append((handler.get("type"), command))
+                    found.append(_HookHandler(handler.get("type"), command, matcher))
         handlers[event] = found
     return handlers
+
+
+def _matcher_covers(matcher: object, event: str, agent: AgentName) -> bool:
+    """Validate an owned group's matcher against the sources it must capture.
+
+    A group without a matcher matches every source. Anything else must be a
+    string regex that still matches every Claude SessionStart source, so a
+    disabled or narrowed matcher can never masquerade as an installed hook.
+    """
+    if matcher is _NO_MATCHER:
+        return True
+    if not isinstance(matcher, str):
+        return False
+    try:
+        pattern = re.compile(matcher)
+    except re.error:
+        return False
+    if agent != "claude-code" or event != "SessionStart":
+        return True
+    return all(pattern.search(source) is not None for source in _CLAUDE_SESSION_START_SOURCES)
 
 
 def _owned_hook_command(
@@ -201,8 +237,9 @@ def _hooks_intact(
 ) -> bool:
     """Require exactly one current, native command handler per lifecycle event.
 
-    Duplicate or outdated owned registrations make the host stale; unrelated
-    hooks (including non-dict entries) are preserved and never counted.
+    Duplicate, outdated, malformed or source-narrowed owned registrations make
+    the host stale; unrelated hooks (including non-dict entries and groups with
+    malformed matchers) are preserved and never counted.
     """
     document = _read_json_object(path)
     if document is None:
@@ -214,10 +251,10 @@ def _hooks_intact(
         return False
     for event in _HOOK_EVENTS:
         owned = [
-            (kind, command)
-            for kind, command in handlers[event]
+            handler
+            for handler in handlers[event]
             if _owned_hook_command(
-                command,
+                handler.command,
                 agent=agent,
                 project=project,
                 recorded=recorded,
@@ -226,8 +263,10 @@ def _hooks_intact(
         ]
         if len(owned) != 1:
             return False
-        kind, command = owned[0]
-        if kind != "command" or command != expected[event]:
+        handler = owned[0]
+        if handler.kind != "command" or handler.command != expected[event]:
+            return False
+        if not _matcher_covers(handler.matcher, event, agent):
             return False
     return True
 

@@ -120,16 +120,22 @@ def _write_setup(
     """Write a native integration fixture, optionally corrupting one surface."""
     project.mkdir(parents=True, exist_ok=True)
     command_prefix = [str(executable)] if prefix is None else list(prefix)
-    claude_commands = _lifecycle_commands(command_prefix, project, "claude-code")
     codex_commands = _lifecycle_commands(command_prefix, project, "codex")
 
     claude_path = project / ".claude" / "settings.json"
     claude_path.parent.mkdir(parents=True, exist_ok=True)
+    # A foreign-project fixture points every owned Claude command at a sibling root.
+    claude_root = (
+        project.parent / "sibling-project" if corrupt == "claude-foreign-project" else project
+    )
+    claude_commands = _lifecycle_commands(command_prefix, claude_root, "claude-code")
     claude_document = _hook_document(*claude_commands)
     if corrupt == "claude-missing":
         del claude_document["hooks"]["SessionEnd"]
     elif corrupt == "claude-altered":
         claude_document["hooks"]["SessionEnd"][0]["hooks"][0]["command"] += " --debug"
+    elif corrupt == "claude-untyped":
+        del claude_document["hooks"]["SessionStart"][0]["hooks"][0]["type"]
     elif corrupt == "claude-duplicate":
         claude_document["hooks"]["SessionStart"].append(
             {"hooks": [{"type": "command", "command": claude_commands[0]}]}
@@ -153,6 +159,20 @@ def _write_setup(
         claude_document["hooks"]["SessionStart"][0]["hooks"][0]["type"] = "prompt"
     elif corrupt == "claude-disable-all":
         claude_document["disableAllHooks"] = True
+    elif corrupt == "claude-matcher-never":
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = "^never-a-session-source$"
+    elif corrupt == "claude-matcher-partial":
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = "startup"
+    elif corrupt == "claude-matcher-untyped":
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = 123
+    elif corrupt == "claude-matcher-invalid":
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = "["
+    elif corrupt == "claude-matcher-valid":
+        claude_document["hooks"]["SessionStart"][0]["matcher"] = "startup|resume|clear|compact"
+    elif corrupt == "claude-matcher-unrelated-bad":
+        # Both bad matchers sit on unrelated groups, which must stay ignored.
+        claude_document["hooks"]["SessionStart"][1]["matcher"] = 123
+        claude_document["hooks"]["SessionEnd"][1]["matcher"] = "^never-a-session-source$"
     claude_path.write_text(json.dumps(claude_document, indent=2) + "\n", encoding="utf-8")
 
     codex_path = project / ".codex" / "hooks.json"
@@ -174,6 +194,8 @@ def _write_setup(
     config_path = project / ".codex" / "config.toml"
     if corrupt == "codex-features":
         config_path.write_text("[features]\nhooks = false\n", encoding="utf-8")
+    elif corrupt == "codex-features-absent":
+        config_path.write_text("[other]\nvalue = 1\n", encoding="utf-8")
     else:
         config_path.write_text("[features]\nhooks = true\n", encoding="utf-8")
 
@@ -194,8 +216,15 @@ def _write_setup(
             "/nonexistent/deepsearch-axi" if corrupt == "stale-executable" else None
         ),
     )
-    if corrupt == "claude-missing-file":
-        claude_path.unlink()
+    # Missing managed files keep a plausible manifest but must read as stale.
+    removals = {
+        "claude-missing-file": claude_path,
+        "codex-hooks-missing-file": codex_path,
+        "codex-config-missing": config_path,
+        "plugin-missing-file": plugin_path,
+    }
+    if corrupt in removals:
+        removals[corrupt].unlink()
 
 
 def _snapshot(root: Path) -> dict[str, tuple[bytes, int] | None]:
@@ -329,18 +358,29 @@ def test_home_readiness(
     stale_cases = (
         ("codex-json", "codex"),
         ("codex-features", "codex"),
+        ("codex-features-absent", "codex"),
         ("codex-missing", "codex"),
         ("codex-altered", "codex"),
         ("codex-duplicate", "codex"),
+        ("codex-hooks-missing-file", "codex"),
+        ("codex-config-missing", "codex"),
         ("claude-missing", "claude-code"),
         ("claude-altered", "claude-code"),
         ("claude-missing-file", "claude-code"),
         ("claude-duplicate", "claude-code"),
         ("claude-outdated", "claude-code"),
         ("claude-prompt", "claude-code"),
+        ("claude-untyped", "claude-code"),
         ("claude-disable-all", "claude-code"),
+        ("claude-foreign-project", "claude-code"),
+        # The owned group's matcher must still cover every SessionStart source.
+        ("claude-matcher-never", "claude-code"),
+        ("claude-matcher-partial", "claude-code"),
+        ("claude-matcher-untyped", "claude-code"),
+        ("claude-matcher-invalid", "claude-code"),
         ("plugin-unmanaged", "opencode"),
         ("plugin-mismatch", "opencode"),
+        ("plugin-missing-file", "opencode"),
     )
     for corrupt, expected_stale in stale_cases:
         project = tmp_path / f"stale-{corrupt}"
@@ -350,6 +390,18 @@ def test_home_readiness(
         for agent, state in stale["integrations"].items():
             if agent != expected_stale:
                 assert state == "installed", (corrupt, agent, stale["integrations"])
+
+    # A valid owned matcher still captures every start, and malformed matchers
+    # on unrelated groups can never change the owned-group result.
+    for corrupt in ("claude-matcher-valid", "claude-matcher-unrelated-bad"):
+        project = tmp_path / f"ready-{corrupt}"
+        _write_setup(project, executable, corrupt=corrupt)
+        _, ready = _home(dict(base_env, DEEPSEEK_API_KEY=FAKE_KEY), project, executable)
+        assert ready["integrations"] == {
+            "claude-code": "installed",
+            "codex": "installed",
+            "opencode": "installed",
+        }, (corrupt, ready["integrations"])
 
     identity_project = tmp_path / "stale-identity"
     _write_setup(identity_project, executable, corrupt="stale-executable")
@@ -741,6 +793,10 @@ def test_command_help(
     }
     fetch = decode(run_cli(["fetch", "--help"], env=environment, cwd=project_dir).stdout)
     assert [entry["name"] for entry in fetch["arguments"]] == ["url"]
+    assert {row["flag"]: row["default"] for row in fetch["flags"]} == {
+        "--full": "false",
+        "--help": "false",
+    }
     setup = decode(run_cli(["setup", "--help"], env=environment, cwd=project_dir).stdout)
     assert {row["flag"]: row["default"] for row in setup["flags"]} == {
         "--agent NAME": "all",
