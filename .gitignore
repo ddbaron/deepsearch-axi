@@ -11,6 +11,7 @@ secrets/
 .worktrees/
 .agentfield-out-*/
 .rumdl_cache/
+.roam/
 
 # Python
 __pycache__/
