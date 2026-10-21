@@ -437,7 +437,23 @@ def test_command_help(
     home_dotenv.parent.mkdir(parents=True)
     home_dotenv.write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
     environment = dict(env, DEEPSEEK_API_KEY=FAKE_KEY, DEEPSEEK_BASE_URL=server.base_url)
-    watched = [cwd_dotenv, home_dotenv, project_dir / MANIFEST_RELATIVE]
+    config_paths = []
+    for relative, content in (
+        (Path(".claude") / "settings.json", '{"hooks": {}}'),
+        (Path(".codex") / "hooks.json", '{"hooks": {}}'),
+        (Path(".codex") / "config.toml", "[features]\nhooks = true\n"),
+        (
+            Path(".opencode") / "plugins" / "deepsearch-axi.js",
+            "// managed-by: deepsearch-axi\n",
+        ),
+        (MANIFEST_RELATIVE, "{}"),
+        (Path(".deepsearch-axi") / "state.json", "{}"),
+    ):
+        path = project_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        config_paths.append(path)
+    watched = [cwd_dotenv, home_dotenv, *config_paths]
     before_project = _snapshot(project_dir)
     before_home = _snapshot(home_dir)
 
