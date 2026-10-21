@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deepsearch-axi"
+version = "0.1.0"
+description = "Agent-native CLI for DeepSeek web search and page fetch with compact TOON output."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Derek Baron" }]
+dependencies = [
+    "toon-format==1.2.0",
+    "tomlkit>=0.13.3,<1",
+]
+
+[project.urls]
+Repository = "https://github.com/ddbaron/deepsearch-axi"
+
+[project.scripts]
+deepsearch-axi = "deepsearch_axi._entry:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deepsearch_axi"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src",
+    "tests",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+    "requirements-dev.txt",
+    ".agents",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# The foundation contracts in architecture §4-§6 are copied verbatim from the
+# frozen architecture; their historical typing spellings are intentional.
+"src/deepsearch_axi/models.py" = ["UP006", "UP007", "UP035", "UP045"]
+"src/deepsearch_axi/guidance.py" = ["UP006", "UP007", "UP035", "UP045"]
+"src/deepsearch_axi/failures.py" = ["UP006", "UP007", "UP035", "UP045"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider -p no:socket"
