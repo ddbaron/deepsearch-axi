@@ -16,6 +16,8 @@ left in place. It is never "fixed" by editing the checks to match the product.
 
 ## What it contains
 
+- `STORIES.md` - a plain-language record of the user stories U1-U10 and the
+  properties P1-P8 that the checks refer to.
 - `run.py` - a standard-library runner (plus `toon-format`) that invokes the
   installed command only as a subprocess. It never imports product code.
 - `fake_backend.py` - a loopback-only fake for the two documented native
