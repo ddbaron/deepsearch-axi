@@ -104,16 +104,20 @@ jobs:
           python -m twine check dist/*
           python - <<'PY'
           import tarfile
+          import tomllib
           import zipfile
           from pathlib import Path
 
+          version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"][
+              "version"
+          ]
           wheel = next(Path("dist").glob("*.whl"))
           with zipfile.ZipFile(wheel) as archive:
               metadata = next(
                   name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
               )
               text = archive.read(metadata).decode("utf-8")
-              assert "Version: 0.2.0" in text
+              assert f"Version: {version}" in text
               assert any(name.endswith("LICENSE") for name in archive.namelist())
           sdist = next(Path("dist").glob("*.tar.gz"))
           with tarfile.open(sdist) as archive:
