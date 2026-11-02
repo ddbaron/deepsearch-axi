@@ -8,16 +8,13 @@ There are no coding-agent hooks, plugins, sessions, or setup command. Agents use
 
 ## Install
 
-The package is installed from this repository. It is not published on PyPI.
+The package is not published on PyPI. Install it from this repository with `uv`:
 
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install -e .
+uv tool install git+https://github.com/ddbaron/deepsearch-axi
 ```
 
 Python 3.11 or newer is required. The only runtime dependency is `toon-format>=1.2,<2`.
-
-## Credentials
 
 Search and fetch need a DeepSeek API key. The key is resolved in this order, and lower-precedence sources are not read after a usable higher-precedence source:
 
@@ -38,6 +35,12 @@ printf 'DEEPSEEK_API_KEY=%s\n' '<your-key>' > ./.env
 ```
 
 The key must be stripped and header-safe: no control characters and representable as Latin-1. A key that appears in command output, errors, or generated hints is replaced with `[REDACTED]`.
+
+A first search:
+
+```sh
+deepsearch-axi search 'python packaging' --limit 3
+```
 
 ## Quick start
 
@@ -98,7 +101,7 @@ Errors are TOON documents with scalar `error` and `help` fields. Error text neve
 
 ```sh
 python -m pytest -q
-python acceptance-checks/run.py --exe .venv/bin/deepsearch-axi
+python acceptance-checks/run.py --exe "$(command -v deepsearch-axi)"
 ```
 
 The tests and the human-owned `acceptance-checks/` runner both invoke the installed command as a subprocess against a loopback fake backend. The offline acceptance tier makes no production requests. `acceptance.sh` is the separate live acceptance script and is not edited by implementation work.
