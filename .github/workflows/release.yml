@@ -54,10 +54,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; updating its assets and metadata."
-            gh release upload "$TAG" dist/* --clobber
-            gh release edit "$TAG" --title "$TAG" --latest
+          if [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]]; then
+            flag="--latest"
           else
-            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --latest
+            flag="--prerelease"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; updating its assets and title."
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --title "$TAG"
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes "$flag"
           fi
