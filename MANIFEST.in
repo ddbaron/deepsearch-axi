@@ -1,0 +1,9 @@
+include README.md
+include LICENSE
+include pyproject.toml
+include requirements-dev.txt
+include MANIFEST.in
+include acceptance.sh
+recursive-include acceptance-checks *.md *.py
+recursive-include tests *.py
+recursive-include .agents *.md

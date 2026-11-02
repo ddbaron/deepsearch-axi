@@ -1,53 +1,38 @@
-# Secrets and environment
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-secrets/
-
-# Pipeline and parallel-work artifacts
-.artifacts/
-.worktrees/
-.agentfield-out-*/
-.rumdl_cache/
-.roam/
-
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
+*.egg-info/
+.eggs/
 build/
 dist/
-*.egg-info/
-*.egg
-.eggs/
 .venv/
 venv/
 env/
-ENV/
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.tox/
-.nox/
 .coverage
 .coverage.*
-coverage.xml
 htmlcov/
-pip-wheel-metadata/
-site/
+.tox/
+.mypy_cache/
+.ruff_cache/
 
-# OS and editor files
+# Pipeline / harness artifacts
+.artifacts/
+.agentfield-out-*/
+.rumdl_cache/
+.roam/
+
+# Parallel worktrees
+.worktrees/
+
+# Secrets and environment
+.env
+.env.*
+!.env.example
+
+# OS files
 .DS_Store
+._*
 Thumbs.db
-*.swp
-.idea/
-.vscode/
-
-# deepsearch-axi tool state and packaging
-.deepsearch-axi/
-wheelhouse/
-node_modules/
+Desktop.ini
