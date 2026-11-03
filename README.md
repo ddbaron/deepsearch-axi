@@ -117,3 +117,7 @@ git push origin v0.2.1
 
 Every `v*` tag push runs `.github/workflows/release.yml`. It checks that the tag matches the package version, runs the tests and offline acceptance checks, builds the sdist and wheel, and creates a GitHub release with generated notes and both files attached.
 A stable tag such as `v0.2.1` is marked Latest; any other tag, such as `v0.3.0rc1`, is published as a pre-release. Re-running the workflow for an existing release refreshes its assets and title without changing the Latest badge.
+
+Stable tags also publish the built sdist and wheel to PyPI through Trusted Publishing, so no PyPI token is stored in the repository.
+That job runs in the `pypi` GitHub Actions environment and authenticates with a short-lived OIDC token, which must match the pending trusted publisher configured for this repository, the `release.yml` workflow file, and the `pypi` environment on pypi.org; the first stable tag to publish creates the project there.
+A tag outside that publisher fails at the publish step. Pre-release tags never publish to PyPI. PyPI does not allow an uploaded version to be replaced, so each release needs a version bump in `pyproject.toml` before tagging, and re-running a tag whose files are already on PyPI skips them instead of failing.
