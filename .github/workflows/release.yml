@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      stable: ${{ steps.github-release.outputs.stable }}
     steps:
       - name: Check out tagged commit
         uses: actions/checkout@v4
@@ -49,15 +51,25 @@ jobs:
         run: python acceptance-checks/run.py --exe "$(command -v deepsearch-axi)"
       - name: Build sdist and wheel
         run: python -m build
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+          overwrite: true
       - name: Publish GitHub release
+        id: github-release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           if [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]]; then
             flag="--latest"
+            echo "stable=true" >> "$GITHUB_OUTPUT"
           else
             flag="--prerelease"
+            echo "stable=false" >> "$GITHUB_OUTPUT"
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; updating its assets and title."
@@ -66,3 +78,29 @@ jobs:
           else
             gh release create "$TAG" dist/* --title "$TAG" --generate-notes "$flag"
           fi
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: release
+    # Reuses the release job's stable tag test, ^v[0-9]+(\.[0-9]+)*$, so
+    # pre-release tags such as v0.3.0rc1 never reach PyPI.
+    if: needs.release.outputs.stable == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/deepsearch-axi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: distributions
+          path: dist/
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.14.3
+        with:
+          # PyPI versions cannot be reused, so a re-run skips files that are
+          # already uploaded instead of failing on the duplicate.
+          skip-existing: true
