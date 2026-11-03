@@ -105,3 +105,15 @@ python acceptance-checks/run.py --exe "$(command -v deepsearch-axi)"
 ```
 
 The tests and the human-owned `acceptance-checks/` runner both invoke the installed command as a subprocess against a loopback fake backend. The offline acceptance tier makes no production requests. `acceptance.sh` is the separate live acceptance script and is not edited by implementation work.
+
+## Release
+
+Releases are cut from tags. Bump `version` in `pyproject.toml` in a pull request, merge it, then push the matching tag:
+
+```sh
+git tag v0.2.1
+git push origin v0.2.1
+```
+
+Every `v*` tag push runs `.github/workflows/release.yml`. It checks that the tag matches the package version, runs the tests and offline acceptance checks, builds the sdist and wheel, and creates a GitHub release with generated notes and both files attached.
+A stable tag such as `v0.2.1` is marked Latest; any other tag, such as `v0.3.0rc1`, is published as a pre-release. Re-running the workflow for an existing release refreshes its assets and title without changing the Latest badge.
