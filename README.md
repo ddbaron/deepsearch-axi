@@ -8,10 +8,10 @@ There are no coding-agent hooks, plugins, sessions, or setup command. Agents use
 
 ## Install
 
-The package is not published on PyPI. Install it from this repository with `uv`:
+Install it from PyPI with `uv`:
 
 ```sh
-uv tool install git+https://github.com/ddbaron/deepsearch-axi
+uv tool install deepsearch-axi
 ```
 
 Python 3.11 or newer is required. The only runtime dependency is `toon-format>=1.2,<2`.
